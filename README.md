@@ -263,7 +263,7 @@ When Codex is in a sandboxed environment, treat as operational blocker:
 - required package missing from local cache;
 - `UnauthorizedAccessException` or equivalent error when trying to create/edit files outside allowed working directory.
 
-In these cases the sub-agent must stop, record evidence and return `Status: BLOCKED`, without insisting on long retries or trying to bypass the sandbox.
+In these cases the sub-agent must stop, record evidence and return `Status: BLOCKED`, without insisting on long retries or trying to bypass the sandbox. There is one narrow exception: when the registry was already reachable and only `dotnet restore` fails with TLS/SSL/security-package authentication, the Orchestrator runs the exact restore once in the task workspace, saves a handoff, and returns the result to Codex. It does not modify certificates, proxy, VPN, credentials, `NuGet.Config`, or add/install packages; a failed host restore remains `BLOCKED`.
 
 ## Front-end Routing
 

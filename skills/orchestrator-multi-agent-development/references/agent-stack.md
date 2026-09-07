@@ -83,7 +83,7 @@ Use para:
 
 **Nao delegar criacao de projeto/suite de testes automatizados.** Nem o orquestrador nem o Pensador geram projetos de teste (`*.Tests`, `__tests__/`, suites xUnit/Jest/Vitest dedicadas) como entregavel — isso e decisao do time do produto, fora deste fluxo. A validacao de cada requisito (`RF`/`CA` do PRD/spec) acontece **no review de codigo** (Fase 8 back-end, Fase 9 front-end): o revisor confere, por inspecao, se o comportamento exigido pelo criterio de aceite esta implementado corretamente — nao depende de uma suite de testes existir.
 
-Bloqueie e escale ao usuario quando o Codex depender de rede externa indisponivel para pacotes/restore, de pacote ausente do cache local, ou quando nao puder escrever fora do working directory permitido. Exemplos: NuGet `NU1301` em `https://api.nuget.org/v3/index.json` e `UnauthorizedAccessException`.
+Bloqueie e escale ao usuario quando o Codex depender de rede externa indisponivel para pacotes/restore, de pacote ausente do cache local, ou quando nao puder escrever fora do working directory permitido. Exemplos: NuGet `NU1301` em `https://api.nuget.org/v3/index.json` e `UnauthorizedAccessException`. A excecao e uma falha TLS/SSL de `dotnet restore` depois que o registry ja esteve acessivel: o Orquestrador faz uma tentativa unica e restrita do mesmo restore no workspace da task, registra um handoff e reabre o Codex; nao muda certificados, proxy, VPN ou configuracao de fontes.
 
 ### Codex `gpt-5.6-sol` (papel review)
 
@@ -114,6 +114,7 @@ Use para o review front-end pos-implementacao (Fase 9), em modo read-only. O AGY
 ## Politica de sandbox
 
 - Rede externa bloqueada no Codex para NuGet/npm/pip/outros registries: registrar evidencia e marcar `BLOCKED`.
+- TLS/SSL em `dotnet restore` apos o registry estar acessivel: use o relay automatico Codex -> Orquestrador -> Codex uma unica vez; se o restore do host falhar, registre `HOST_DEPENDENCY_RESTORE_FAILED` e mantenha `BLOCKED`.
 - Pacote necessario nao existe no cache local do ambiente Codex: registrar dependencia ausente e marcar `BLOCKED`.
 - Escrita fora do working directory permitido retorna erro de permissao: registrar caminho alvo, working directory efetivo e marcar `BLOCKED`.
 - Para tasks `FRONTEND_ONLY` sem necessidade de instalar dependencias externas, AGY continua sendo a rota preferida.

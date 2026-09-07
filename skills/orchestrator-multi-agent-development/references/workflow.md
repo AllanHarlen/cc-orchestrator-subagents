@@ -418,7 +418,7 @@ Para Codex:
 - passe `--model <codexModel>` sempre — os tres papeis fixos sao `gpt-5.6-sol` (review), `gpt-5.6-terra` (implementacao) e `gpt-5.6-luna` (correcao), ver "Vocabulario de modelo do Codex" na Fase 2. Nunca omita `--model`: sem ele, o Codex cai no `model = "gpt-5.6-sol"` do `~/.codex/config.toml` do usuario, que e o modelo de review, para qualquer task;
 - `--effort <codexEffort>`, derivado de complexidade/risco na classificacao (nunca um valor fixo) — tipicamente `medium` para implementacao/handoff/ajuste, `high` para review e para task de risco alto de regressao;
 - registre `codexModelSource: user|heuristic|adaptive`, mesma semantica de `agyModelSource`;
-- antes de executar instalacao/restore de pacotes, verifique se a task depende de rede externa ou de cache local; se falhar por rede bloqueada ou pacote ausente, pare como `BLOCKED`.
+- antes de executar instalacao/restore de pacotes, verifique se a task depende de rede externa ou de cache local; se falhar por rede bloqueada ou pacote ausente, pare como `BLOCKED`. A unica excecao automatica e o relay TLS descrito na politica de sandbox: ele executa uma vez o mesmo `dotnet restore` pelo Orquestrador e devolve a evidencia ao Codex; nao instala nem adiciona pacotes.
 - se houver erro de permissao ao escrever fora do working directory permitido, pare como `BLOCKED` e reporte o caminho alvo.
 
 Para Antigravity/AGY (implementacao):
@@ -552,6 +552,14 @@ Grava `conversationId`/`sessionId`, `resolvedModel`, `codexEffort` efetivo, `sta
   - marque `BLOCKED`;
   - registre comando, erro e pacote necessario;
   - peca decisao do usuario antes de alterar plano ou dependencia.
+
+- Falha de TLS/SSL de `dotnet restore` apos acesso ao registry (por exemplo, `The SSL connection could not be established`, `Authentication failed` ou `Credenciais nao disponiveis no pacote de seguranca`):
+  - classifique como `CODEX_TLS_RESTORE_RELAY`, nao como nova liberacao de sandbox;
+  - preserve a evidencia do Codex e execute uma unica vez o mesmo `dotnet restore <solution-ou-project>` pelo Orquestrador, no workspace efetivo da task;
+  - nunca execute `dotnet add package`, altere `NuGet.Config`, certificados, proxy, VPN, credenciais ou flags que ignorem fontes/falhas;
+  - persista comando, diretorio, exit code, saida redigida e hashes/paths de arquivos de lock eventualmente alterados em `run/handoffs/<taskId>-dependency-restore.md`, depois registre o evento de relay por `orchestration-state.mjs` (nunca editando `events.jsonl` diretamente);
+  - se o restore passar, abra uma nova tentativa Codex com o handoff como contexto, mantendo o mesmo escopo e orientando validacoes com `--no-restore` quando aplicavel;
+  - se falhar, marque `BLOCKED` com `reasonCode: HOST_DEPENDENCY_RESTORE_FAILED`, sem novo retry ou pergunta imediata ao usuario. A wave pode continuar somente com tasks independentes.
 
 - `UnauthorizedAccessException` ou erro equivalente ao escrever fora do working directory permitido:
   - marque `BLOCKED`;

@@ -113,6 +113,7 @@ Regras:
 - reporte todos os arquivos alterados;
 - se houver cota, retorne `Status: QUOTA_EXHAUSTED`;
 - se `dotnet restore`, `dotnet add package`, npm, pip ou outro registry falhar por rede externa bloqueada ou pacote ausente do cache local, retorne `Status: BLOCKED` com o comando, pacote e erro;
+- se `dotnet restore` falhar depois de acesso ao registry por TLS/SSL/autenticacao do pacote de seguranca (por exemplo, `The SSL connection could not be established`, `Authentication failed` ou `Credenciais nao disponiveis no pacote de seguranca`), nao repita nem altere proxy, certificado, VPN, variaveis de ambiente ou `NuGet.Config`; retorne `Status: BLOCKED`, o target exato do restore e `Relay de restore TLS elegivel: sim`. O orquestrador pode executar uma unica tentativa fora do sandbox e abrir uma nova tentativa para voce com a evidencia;
 - se houver `UnauthorizedAccessException` ou erro de permissao ao escrever fora do working directory permitido, retorne `Status: BLOCKED` com working directory efetivo e caminho alvo;
 - se receber `SLOW_CHECKIN`, responda com progresso real, arquivos tocados, bloqueios, riscos e ETA.
 
@@ -126,9 +127,10 @@ Retorno:
 6. Pendencias
 7. Riscos
 8. Evidencia operacional
-9. Limites de sandbox: <nenhum | rede externa bloqueada | pacote ausente no cache | escrita fora do working directory | outro>
-10. Skills utilizadas: <lista das skills usadas ou "nenhuma">
-11. Tokens usados: input=<N> output=<N> cache_read=<N> total=<N>
+9. Limites de sandbox: <nenhum | rede externa bloqueada | pacote ausente no cache | escrita fora do working directory | TLS restore relay elegivel | outro>
+10. Relay de restore TLS: <nao aplicavel | elegivel: sim, target: ... | executado pelo orquestrador: ver caminho do handoff>
+11. Skills utilizadas: <lista das skills usadas ou "nenhuma">
+12. Tokens usados: input=<N> output=<N> cache_read=<N> total=<N>
     (informe N/A se a plataforma nao expor o dado)
 ```
 

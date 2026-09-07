@@ -263,7 +263,7 @@ Quando o Codex estiver em ambiente sandboxado, trate como bloqueio operacional:
 - pacote necessário ausente do cache local;
 - `UnauthorizedAccessException` ou erro equivalente ao tentar criar/editar arquivos fora do working directory permitido.
 
-Nesses casos o subagente deve parar, registrar evidência e retornar `Status: BLOCKED`, sem insistir em retries longos nem tentar contornar o sandbox.
+Nesses casos o subagente deve parar, registrar evidência e retornar `Status: BLOCKED`, sem insistir em retries longos nem tentar contornar o sandbox. Há uma exceção limitada: quando o registry já esteve acessível e apenas `dotnet restore` falha por TLS/SSL/autenticação do pacote de segurança, o Orquestrador executa uma única vez o mesmo restore no workspace da task, salva o handoff e devolve o resultado ao Codex. Ele não altera certificados, proxy, VPN, credenciais, `NuGet.Config` nem instala/adiciona pacotes; falha nessa tentativa permanece `BLOCKED`.
 
 ## Roteamento de front-end
 

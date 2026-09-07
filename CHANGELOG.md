@@ -1,5 +1,19 @@
 # Changelog
 
+## [4.9.2] — 2026-09-07
+
+### Relay automático para falha TLS no restore do Codex
+
+- `SKILL.md`, `references/workflow.md`, `references/agent-stack.md` e
+  `references/subagent-prompts.md`: quando o registry NuGet já esteve acessível e o
+  `dotnet restore` do Codex falha por TLS/SSL/autenticação do pacote de segurança, o
+  Orquestrador faz uma única tentativa do mesmo restore no workspace da task e devolve
+  um handoff auditável ao Codex. O relay não altera certificados, proxy, VPN,
+  credenciais ou `NuGet.Config`, não adiciona pacotes e mantém `BLOCKED` se o restore
+  do host também falhar.
+- `README.md`, `README.pt-BR.md`: documentada a exceção limitada à política de sandbox.
+- `npm test`: 369 passed, 0 failed.
+
 ## [4.9.1] — 2026-09-07
 
 ### Watch obrigatorio apos dispatch; `.orchestration`/`.orchestrator` gitignorados por padrao

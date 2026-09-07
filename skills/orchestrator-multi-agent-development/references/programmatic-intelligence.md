@@ -28,14 +28,14 @@ Todos:
 - limitam arquivos/bytes/output;
 - não modificam código produtivo;
 - emitem `{schemaVersion, kind, summary, details, evidenceId, generatedAt}`;
-- podem persistir em `.orchestration/<slug>/evidence/` e anexar o ID à task.
+- podem persistir em `.orchestrator/runs/<slug>/evidence/` e anexar o ID à task.
 
 Exemplo:
 
 ```bash
 node "${CLAUDE_SKILL_DIR}/scripts/inspect-api-ui.mjs" \
   --root . --backend src/Api --frontend src/Web \
-  --dir .orchestration/<slug> --task FE-01
+  --dir .orchestrator/runs/<slug> --task FE-01
 ```
 
 O schema público é `assets/intelligence-result.schema.json`. O LLM interpreta exceções e decisões novas; comparações repetíveis ficam no código.

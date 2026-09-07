@@ -191,7 +191,7 @@ Se o usuário adota a configuração atual:
 
 ```bash
 node "${CLAUDE_SKILL_DIR}/scripts/orchestration-state.mjs" project-config-apply \
-  --dir ".orchestration/<slug>" --scope pending
+  --dir ".orchestrator/runs/<slug>" --scope pending
 ```
 
 A nova configuração vale **apenas para tasks ainda não despachadas** (`status: PENDING`, `attempt: 0`). A operação atualiza o snapshot e emite `PROJECT_CONFIG_UPDATED` com `differences`, `appliedTaskIds`, `skippedTaskIds` e o motivo da mudança. Task já despachada mantém o Executor do dispatch, e é esse Executor que a reconciliação e a telemetria usam.

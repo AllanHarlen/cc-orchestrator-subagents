@@ -1,6 +1,6 @@
 {
   "name": "cc-orchestrador-subagents",
-  "version": "4.9.0",
+  "version": "4.9.1",
   "description": "Persistent multi-agent engineering orchestrator for Claude Code. Coordinates Codex and Antigravity/AGY from an existing PRD with verified project memory, searchable history, durable state/resume, lifecycle adapters, isolated worktrees, deterministic validation, privacy-first telemetry, adaptive routing, reviews and curated learning.",
   "author": {
     "name": "allanharlen"

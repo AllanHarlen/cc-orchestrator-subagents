@@ -17,18 +17,18 @@
 - **Orquestrador:** `Claude Sonnet 4.6 medium`
 - **Tokens consolidados da execução:** `<total | N/A>` (detalhe por agente em `report/implementation-report.md` seção 11a e `report/subagents-context.md`)
 - **Artefatos principais:**
-  - `.orchestration/<nome>/plan/tasks-classification.md`
-  - `.orchestration/<nome>/plan/waves.md`
-  - `.orchestration/<nome>/contracts/`
-  - `.orchestration/<nome>/run/monitoring.md`
-  - `.orchestration/<nome>/review/review-final.md` (review back-end)
-  - `.orchestration/<nome>/review/review-frontend.md` (review front-end)
-  - `.orchestration/<nome>/report/workflow-log.md`
-  - `.orchestration/<nome>/report/subagents-context.md`
-  - `.orchestration/<nome>/report/implementation-report.md`
-  - `.orchestration/<nome>/state.json` + `events.jsonl`
-  - `.orchestration/<nome>/learning/learning-report.md`
-  - `.orchestration/<nome>/evidence/`
+  - `.orchestrator/runs/<nome>/plan/tasks-classification.md`
+  - `.orchestrator/runs/<nome>/plan/waves.md`
+  - `.orchestrator/runs/<nome>/contracts/`
+  - `.orchestrator/runs/<nome>/run/monitoring.md`
+  - `.orchestrator/runs/<nome>/review/review-final.md` (review back-end)
+  - `.orchestrator/runs/<nome>/review/review-frontend.md` (review front-end)
+  - `.orchestrator/runs/<nome>/report/workflow-log.md`
+  - `.orchestrator/runs/<nome>/report/subagents-context.md`
+  - `.orchestrator/runs/<nome>/report/implementation-report.md`
+  - `.orchestrator/runs/<nome>/state.json` + `events.jsonl`
+  - `.orchestrator/runs/<nome>/learning/learning-report.md`
+  - `.orchestrator/runs/<nome>/evidence/`
 
 ## 2. Resumo Executivo do Workflow
 
@@ -41,9 +41,9 @@
 | `-1 Goal autonomy` | `<N/A | DONE | BLOCKED>` | `<ts>` | `<usado ou N/A>` | `<links>` | `<observacao>` |
 | `0 Preflight` | `<DONE | FAILED>` | `<ts>` | `<resultado do preflight>` | `<N/A>` | `<falhas se houver>` |
 | `1 Ingestao da especificacao` | `<status>` | `<ts>` | `<PRD/spec ingerido>` | `<spec fonte>` | `<lacunas bloqueantes se houver>` |
-| `2 Classificacao` | `<status>` | `<ts>` | `<tasks classificadas>` | `.orchestration/<nome>/plan/tasks-classification.md` | `<falhas se houver>` |
-| `3 Ondas` | `<status>` | `<ts>` | `<ondas definidas + validate-routing>` | `.orchestration/<nome>/plan/waves.md` | `<restricoes/erros de roteamento>` |
-| `4 Contratos` | `<status>` | `<ts>` | `<contratos criados>` | `.orchestration/<nome>/contracts/*.md` | `<duvidas/decisoes>` |
+| `2 Classificacao` | `<status>` | `<ts>` | `<tasks classificadas>` | `.orchestrator/runs/<nome>/plan/tasks-classification.md` | `<falhas se houver>` |
+| `3 Ondas` | `<status>` | `<ts>` | `<ondas definidas + validate-routing>` | `.orchestrator/runs/<nome>/plan/waves.md` | `<restricoes/erros de roteamento>` |
+| `4 Contratos` | `<status>` | `<ts>` | `<contratos criados>` | `.orchestrator/runs/<nome>/contracts/*.md` | `<duvidas/decisoes>` |
 | `5 Delegacao paralela` | `<status>` | `<ts>` | `<subagentes lancados>` | `<run/monitoring.md>` | `<falhas se houver>` |
 | `6 Monitoramento` | `<status>` | `<ts>` | `<eventos principais>` | `<run/monitoring.md>` | `<SLOW_CHECKIN/cota/tools>` |
 | `7 Integracao` | `<status>` | `<ts>` | `<entregas consolidadas>` | `<report/subagents-context.md>` | `<divergencias/fallbacks>` |

@@ -26,18 +26,18 @@
 ## 4. Artefatos utilizados
 
 - especificação fonte (PRD/spec): `<caminho>`
-- `.orchestration/<nome>/plan/tasks-classification.md`
-- `.orchestration/<nome>/plan/waves.md`
-- `.orchestration/<nome>/contracts/`
-- `.orchestration/<nome>/run/monitoring.md`
-- `.orchestration/<nome>/review/review-final.md` (review back-end)
-- `.orchestration/<nome>/review/review-frontend.md` (review front-end)
-- `.orchestration/<nome>/report/workflow-log.md`
-- `.orchestration/<nome>/report/subagents-context.md`
-- `.orchestration/<nome>/state.json`
-- `.orchestration/<nome>/events.jsonl`
-- `.orchestration/<nome>/learning/learning-report.md`
-- `.orchestration/<nome>/evidence/`
+- `.orchestrator/runs/<nome>/plan/tasks-classification.md`
+- `.orchestrator/runs/<nome>/plan/waves.md`
+- `.orchestrator/runs/<nome>/contracts/`
+- `.orchestrator/runs/<nome>/run/monitoring.md`
+- `.orchestrator/runs/<nome>/review/review-final.md` (review back-end)
+- `.orchestrator/runs/<nome>/review/review-frontend.md` (review front-end)
+- `.orchestrator/runs/<nome>/report/workflow-log.md`
+- `.orchestrator/runs/<nome>/report/subagents-context.md`
+- `.orchestrator/runs/<nome>/state.json`
+- `.orchestrator/runs/<nome>/events.jsonl`
+- `.orchestrator/runs/<nome>/learning/learning-report.md`
+- `.orchestrator/runs/<nome>/evidence/`
 - `.orchestrator/project-memory.md` (projecao validada usada na classificacao)
 - `.orchestrator/history.db` / `.orchestrator/telemetry.jsonl` (projecoes cross-run)
 
@@ -148,7 +148,7 @@ Para cada contrato:
 - typecheck/lint.
 - `inspect-diff` / `validate-task-scope`;
 - `inspect-api-ui` / `validate-wire-format`;
-- resultados condensados em `.orchestration/<nome>/evidence/`.
+- resultados condensados em `.orchestrator/runs/<nome>/evidence/`.
 
 ## 13. Matriz de rastreabilidade (RF/CA → evidência)
 

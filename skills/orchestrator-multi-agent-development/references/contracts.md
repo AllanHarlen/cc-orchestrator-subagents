@@ -5,7 +5,7 @@ Contrato e obrigatorio sempre que houver troca de dados entre front-end e back-e
 ## Onde salvar
 
 ```text
-.orchestration/<nome>/contracts/<task-id-ou-par>.md
+.orchestrator/runs/<nome>/contracts/<task-id-ou-par>.md
 ```
 
 Use um arquivo por task `FULLSTACK` ou por par dependente front-back quando a classificacao estiver separada.

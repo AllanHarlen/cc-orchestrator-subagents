@@ -21,6 +21,7 @@ import {
   interruptTaskLifecycle,
   retryTaskLifecycle,
   tickLifecycle,
+  watchLifecycle,
 } from "../skills/orchestrator-multi-agent-development/scripts/lib/lifecycle-manager.mjs";
 import {
   executeExecutorControl,
@@ -115,6 +116,82 @@ test("lifecycle polls a real control adapter, persists the result first and rene
   assert.equal(tick.heartbeats[0].lease.status, "ACTIVE");
   assert.equal(loadRun(artifactDir).state.tasks["BE-01"].status, "RUNNING");
   assert.ok(readTelemetry(root).length >= 1);
+});
+
+test("watchLifecycle ticks up to maxTicks and reports one onTick record per tick", async () => {
+  const { root, artifactDir } = fixture();
+  updateTaskStatus(artifactDir, "BE-01", "RUNNING", {
+    projectRoot: root,
+    executor: "codex",
+    sessionId: "session-one",
+  });
+  const ticks = [];
+  const result = await watchLifecycle(artifactDir, {
+    projectRoot: root,
+    intervalSeconds: 0,
+    maxTicks: 3,
+    onTick: (tick) => ticks.push(tick),
+  });
+  assert.equal(result.ticks, 3);
+  assert.equal(result.stoppedReason, null);
+  assert.equal(ticks.length, 3);
+  assert.deepEqual(
+    ticks.map((tick) => tick.tick),
+    [1, 2, 3],
+  );
+  // Sem adapter, reconcileRunAtDirectory nao tem autoridade externa para
+  // confirmar a task e a rebaixa de RUNNING para UNKNOWN ja no primeiro tick
+  // (SKILL.md regra 23: "sem autoridade externa, mantenha UNKNOWN") — watch
+  // continua rodando porque UNKNOWN esta em ACTIVE_TASK_STATUSES.
+  for (const tick of ticks) {
+    assert.equal(typeof tick.ranAt, "string");
+    assert.equal(tick.summary.counts.UNKNOWN, 1);
+  }
+});
+
+test("watchLifecycle stops early once no task is left active (NO_ACTIVE_TASKS)", async () => {
+  const { root, artifactDir } = fixture();
+  updateTaskStatus(artifactDir, "BE-01", "RUNNING", {
+    projectRoot: root,
+    executor: "codex",
+    sessionId: "session-one",
+  });
+  updateTaskStatus(artifactDir, "BE-01", "DONE", {
+    projectRoot: root,
+    evidence: ["executor:BE-01:DONE"],
+  });
+  const ticks = [];
+  const result = await watchLifecycle(artifactDir, {
+    projectRoot: root,
+    intervalSeconds: 0,
+    maxTicks: 10,
+    onTick: (tick) => ticks.push(tick),
+  });
+  assert.equal(result.stoppedReason, "NO_ACTIVE_TASKS");
+  assert.equal(result.ticks, 1);
+  assert.equal(ticks.length, 1);
+  assert.equal(loadRun(artifactDir).state.lifecycle.lastSweepAt != null, true);
+});
+
+test("watchLifecycle with autoStop: false ignores terminal state and always runs maxTicks", async () => {
+  const { root, artifactDir } = fixture();
+  updateTaskStatus(artifactDir, "BE-01", "RUNNING", {
+    projectRoot: root,
+    executor: "codex",
+    sessionId: "session-one",
+  });
+  updateTaskStatus(artifactDir, "BE-01", "DONE", {
+    projectRoot: root,
+    evidence: ["executor:BE-01:DONE"],
+  });
+  const result = await watchLifecycle(artifactDir, {
+    projectRoot: root,
+    intervalSeconds: 0,
+    maxTicks: 2,
+    autoStop: false,
+  });
+  assert.equal(result.stoppedReason, null);
+  assert.equal(result.ticks, 2);
 });
 
 test("interrupt and retry require confirmed executor actions and preserve attempt history", () => {

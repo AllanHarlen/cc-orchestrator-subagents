@@ -1,5 +1,51 @@
 # Changelog
 
+## [4.9.1] — 2026-09-07
+
+### Watch obrigatorio apos dispatch; `.orchestration`/`.orchestrator` gitignorados por padrao
+
+Segue-se a `analise-run-oficina-saas-20260906.md`: uma run real despachou 3 tasks do Codex em
+paralelo, todas terminaram em ~5 minutos, e o orquestrador nunca soube — a sessao ficou ociosa
+apos o dispatch e so retomou um dia depois. Separadamente, apagar `.orchestration`/`.orchestrator`
+do disco nao "pegava": como esses caminhos eram versionados por padrao no projeto alvo, o
+primeiro commit seguinte do proprio orquestrador sobre `state.json`/`events.jsonl` ressuscitava o
+conteudo antigo via git normal.
+
+- `skills/orchestrator-multi-agent-development/scripts/lib/lifecycle-manager.mjs` (alterado):
+  `watchLifecycle` ganha `options.onTick` (registro compacto por tick) e parada antecipada
+  (`stoppedReason: "NO_ACTIVE_TASKS"` quando nao sobra task `RUNNING`/`STALLED`/`UNKNOWN`,
+  `"RUN_TERMINAL"` quando a run chega a `DONE`/`CANCELLED`; `--auto-stop=false` desliga).
+- `skills/orchestrator-multi-agent-development/scripts/orchestration-lifecycle.mjs` (alterado):
+  `watch` agora imprime uma linha NDJSON `{"type":"tick",...}` por tick no stdout, em vez de um
+  unico JSON so ao final — inspecionavel com o processo ja rodando em segundo plano.
+- `skills/orchestrator-multi-agent-development/scripts/lib/orchestration-state.mjs` (alterado):
+  `updateCompletionGate` recusa fechar o gate `monitoring` como `DONE`
+  (`GATE_MONITORING_REQUIRES_SWEEP`) enquanto `lifecycle.lastSweepAt` estiver vazio — prova de que
+  `tick`/`watch`/`sweep` rodou ao menos uma vez durante a Fase 6, nao so que alguma evidencia foi
+  escrita antes de fecha-la.
+- `references/workflow.md`, `SKILL.md`, `commands/orchestrator.md` (alterados): iniciar
+  `orchestration-lifecycle.mjs watch` em segundo plano passa a ser obrigatorio assim que a ultima
+  task de uma wave e despachada — mesmo sem `--adapter-config` (sem adapter, `tick` ja rebaixa
+  `RUNNING` nao confirmado para `UNKNOWN` a partir do primeiro tick, e `sweepStalledTasks` marca
+  `STALLED` por inatividade; o adapter so melhora o sinal). Os mesmos tres arquivos tinham 21+11+15
+  ocorrencias de `--dir ".orchestration/<slug>"` como alvo de escrita, nunca atualizadas apos a
+  migracao para `.orchestrator/runs/<slug>/` — corrigidas para o caminho atual; a prosa que
+  descreve o fallback de leitura da raiz legada foi preservada e clarificada.
+- `references/persistent-state.md`, `README.md`, `README.pt-BR.md` (alterados): "O que
+  versionar"/"What to Commit" inverte o padrao — `.orchestration/` e `.orchestrator/` ficam
+  gitignorados por padrao (mesma convencao que `cc-pensador` ja usa para `.pensador/`); o bloco
+  estreito antigo vira opt-in explicito documentado, com o risco que reintroduz. Documentada a
+  limitacao residual: a inversao nao desfaz historico ja commitado (precisa de
+  `git rm --cached -r` manual).
+- `tests/lifecycle-telemetry-router.test.mjs`, `tests/orchestration-state.test.mjs`,
+  `tests/phase-transitions.test.mjs` (alterados): cobertura nova para `watchLifecycle`
+  (`maxTicks`, `onTick`, `stoppedReason`) e para `GATE_MONITORING_REQUIRES_SWEEP`; os dois helpers
+  de teste que fechavam o gate `monitoring` sem nunca chamar `sweepStalledTasks` foram corrigidos.
+  `npm test`: 369 passed, 0 failed.
+- Nenhuma mudanca em `artifact-layout.mjs` nem em `handoff-contract.md`: nenhum dos dois toca git,
+  e as menções a `.orchestration/` no contrato sao prosa de fallback de leitura, nao de
+  versionamento — os 4 plugins seguem byte-identicos.
+
 ## [4.8.1] — 2026-09-03
 
 ### `nextStage` roteia para o Testador por padrao; suite do handoff-validator alinhada

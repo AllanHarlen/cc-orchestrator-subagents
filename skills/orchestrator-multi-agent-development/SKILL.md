@@ -16,9 +16,9 @@ O orquestrador atua **exclusivamente em projetos com PRD ja montado ou com espec
 A especificacao chega por **duas vias** (ver `references/handoff-contract.md`):
 
 - **Modo independente:** o usuario fornece a demanda/PRD/spec direto via `/orquestrador "..."`, mencao de arquivo (`@arquivo`) ou envio do PRD/spec.
-- **Modo conjunto (Pensador → Orchestrador):** o Pensador ja produziu os artefatos. Na Fase 1, antes de pedir a especificacao ao usuario, procure `.pensador/*/handoff.json` (`stage: pensador`, `status: DONE`). Se existir, ingira PRD/Spec + `api-contract` + `design-system-files` como fonte da verdade e correlacione pelo `slug`; grave seus proprios artefatos em `.orchestration/<slug>/`. Ver Fase 1 em `references/workflow.md`.
+- **Modo conjunto (Pensador → Orchestrador):** o Pensador ja produziu os artefatos. Na Fase 1, antes de pedir a especificacao ao usuario, procure `.pensador/*/handoff.json` (`stage: pensador`, `status: DONE`). Se existir, ingira PRD/Spec + `api-contract` + `design-system-files` como fonte da verdade e correlacione pelo `slug`; grave seus proprios artefatos em `.orchestrator/runs/<slug>/`. Ver Fase 1 em `references/workflow.md`.
 
-Ao concluir, o orquestrador grava um `report/handoff.json` em `.orchestration/<slug>/` (secoes 4-5 do handoff contract) para o Executor consumir na etapa de correcao e ajustes finos.
+Ao concluir, o orquestrador grava um `report/handoff.json` em `.orchestrator/runs/<slug>/` (secoes 4-5 do handoff contract) para o Executor consumir na etapa de correcao e ajustes finos.
 
 ## Regras centrais
 
@@ -49,7 +49,7 @@ Ao concluir, o orquestrador grava um `report/handoff.json` em `.orchestration/<s
 25. **Routing adaptativo e conservador e explicavel.** Override do usuario e pisos de fidelidade continuam soberanos. Historico so altera o modelo com amostra comparavel suficiente por `taskType` + `complexity`, ganho mensuravel e evidencia registrada em `agyModelEvidence`; sem isso, use a heuristica.
 26. **Telemetria e metadata-only.** Registre IDs, categorias, modelo, tentativa, duracao, resultado, review, regressao, contadores e fingerprints. Prompt, conteudo, source code, diff, raw output, credentials e secrets sao proibidos, inclusive aninhados. Retencao e dry-run por padrao e cria backup antes de aplicar.
 27. **Learning produz candidatos, nunca regras globais automaticas.** A Fase 12 gera `learning/learning-report.md` a partir de evidencia duravel, sem editar `SKILL.md`. Uma lesson so vira Learned Recipe apos validacao independente; triggers sao deterministas, outcomes sao medidos e o Curator controla `ACTIVE`, `STALE`, `ARCHIVED`, pinning, contradicoes, backup e rollback.
-28. **O diretorio da run tem layout fixo por estagio do workflow.** Toda run nova nasce com `state.layoutVersion: 2` e grava os artefatos agrupados: `plan/` (classificacao e waves), `contracts/`, `run/` (monitoring, probes, `executor-results/`, `prompts/`), `review/` (reviews, E2E, `screenshots/`), `report/` (relatorios e `handoff.json`), `evidence/` e `learning/`. `state.json` e `events.jsonl` ficam sempre na **raiz** da run, porque e por eles que `resume` e a numeracao de `runId` descobrem a run — nunca mova esses dois nem aninhe o diretorio da run dentro de `.orchestration/`. Runs criadas antes desta versao continuam no layout plano (`layoutVersion` ausente) e seguem sendo lidas sem migracao; nao converta uma run existente. Ver `references/persistent-state.md`.
+28. **O diretorio da run tem layout fixo por estagio do workflow.** Toda run nova nasce com `state.layoutVersion: 2` e grava os artefatos agrupados: `plan/` (classificacao e waves), `contracts/`, `run/` (monitoring, probes, `executor-results/`, `prompts/`), `review/` (reviews, E2E, `screenshots/`), `report/` (relatorios e `handoff.json`), `evidence/` e `learning/`. `state.json` e `events.jsonl` ficam sempre na **raiz** da run, porque e por eles que `resume` e a numeracao de `runId` descobrem a run — nunca mova esses dois nem aninhe o diretorio da run dentro de `.orchestrator/runs/`. Runs criadas antes desta versao continuam no layout plano (`layoutVersion` ausente) e seguem sendo lidas sem migracao; nao converta uma run existente. Ver `references/persistent-state.md`.
 
 ## Fase 0 - Preflight, configuracao do projeto e instalacao assistida
 
@@ -186,11 +186,11 @@ Nao tente contornar o sandbox com retries longos, troca arbitraria de ferramenta
 
 Leia `references/persistent-state.md` por completo ao iniciar ou retomar um run. Ele define schemas, comandos, transicoes validas, thresholds e o protocolo de reconciliacao.
 
-Assim que `.orchestration/<slug>/` for conhecido:
+Assim que `.orchestrator/runs/<slug>/` for conhecido:
 
 ```bash
 node "${CLAUDE_SKILL_DIR}/scripts/orchestration-state.mjs" init \
-  --slug "<slug>" --dir ".orchestration/<slug>" --phase 1
+  --slug "<slug>" --dir ".orchestrator/runs/<slug>" --phase 1
 ```
 
 Depois de criar `plan/tasks-classification.md` e `plan/waves.md`, execute `sync`. Envolva cada fase com checkpoints `RUNNING`/`DONE`; antes de delegar, registre a task `RUNNING` com executor e identificadores; durante monitoramento, use `heartbeat` apenas para progresso observavel e `sweep` para detectar stall. Persista o estado terminal antes de publicar o retorno na conversa.
@@ -239,7 +239,7 @@ Outputs seguem `assets/intelligence-result.schema.json`, possuem limites, caminh
 Leia `references/worktrees-routing.md`. Depois de `sync`, planeje a wave antes do dispatch:
 
 ```bash
-node "${CLAUDE_SKILL_DIR}/scripts/orchestration-worktree.mjs" plan --dir ".orchestration/<slug>" --wave <N>
+node "${CLAUDE_SKILL_DIR}/scripts/orchestration-worktree.mjs" plan --dir ".orchestrator/runs/<slug>" --wave <N>
 ```
 
 Crie worktree apenas para tasks `ISOLATED`; `SERIAL`/`UNSCOPED` ficam fora do fan-out concorrente. Persista base/head/integration status e recupere worktrees apos crash. Antes de atribuir modelo AGY sem override, consulte `orchestration-router.mjs route`; registre a decisao e copie `decision.evidence` para `agyModelEvidence`. O validator reprova `agyModelSource: adaptive` sem evidencia.
@@ -252,7 +252,7 @@ Depois de concluir duravelmente a Fase 11 e antes de marcar a run `DONE`, execut
 
 ```bash
 node "${CLAUDE_SKILL_DIR}/scripts/orchestration-learning.mjs" run \
-  --dir ".orchestration/<slug>"
+  --dir ".orchestrator/runs/<slug>"
 ```
 
 A Fase 12 e completion gate obrigatorio. Ela cria candidates e `learning/learning-report.md`; nao promove recipes automaticamente. Promocao exige `lesson-validate` seguido de `recipe-promote`. O Curator e dry-run por padrao, cria backup antes de mutar e nunca apaga recipes arquivadas. Aplicacao, pin, archive, activate ou rollback sao operacoes explicitas.
@@ -289,12 +289,12 @@ Em stacks C# + TypeScript, destaque explicitamente:
 3. Montar waves, consultar routing adaptativo, validar roteamento e planejar worktrees por overlap de escopo
 4. Validar roteamento/wire format, materializar arquivos de design (Open Design) via `materializeInto` e criar contratos obrigatorios
 5. Criar worktrees elegiveis, adquirir leases e delegar em paralelo
-6. Monitorar via lifecycle adapters, heartbeat observavel, sweep/stall/grace e telemetria metadata-only
+6. Monitorar: `orchestration-lifecycle.mjs watch` em segundo plano e obrigatorio assim que a wave e despachada (mesmo sem adapter — sem adapter ele ja rebaixa RUNNING nao confirmado para `UNKNOWN` e sinaliza `STALLED` por inatividade); lifecycle adapters, heartbeat observavel, sweep/stall/grace e telemetria metadata-only quando disponiveis
 7. Integrar worktrees, validar diff/escopo/contratos/testes com scripts deterministas e registrar outcomes
 8. Review back-end pos-implementacao (Codex `--effort high`; ignorar se nao houver back-end)
 9. Review front-end pos-implementacao (AGY `--read-only --format json --model pro-high --effort high`; ignorar se nao houver front-end)
 9.5. **Verificacao E2E no navegador real (Playwright MCP) dos fluxos criticos — OBRIGATORIA quando front e back sao deploys/origens separados; ver regra 17 e `references/workflow.md`**
-10. Gerar `report/workflow-log.md`, `report/subagents-context.md`, `report/implementation-report.md` na raiz de execucao (`.orchestration/<slug>/`); consolidar contagem de tokens por agente; gravar o `report/handoff.json` do estagio orchestrador (para o Executor) conforme `references/handoff-contract.md`
+10. Gerar `report/workflow-log.md`, `report/subagents-context.md`, `report/implementation-report.md` na raiz de execucao (`.orchestrator/runs/<slug>/`); consolidar contagem de tokens por agente; gravar o `report/handoff.json` do estagio orchestrador (para o Executor) conforme `references/handoff-contract.md`
 11. Preparar e persistir a entrega/instrucoes de negocio, sem publicar sucesso antes dos gates finais
 12. Gerar `learning/learning-report.md` e candidate lessons; projetar history/telemetry, auditar gates, marcar a run `DONE`, verificar integridade e somente entao publicar a entrega
 
@@ -342,17 +342,18 @@ Em stacks C# + TypeScript, destaque explicitamente:
 - [ ] **Fase 9.5: quando front e back sao separados, os fluxos criticos foram exercitados num navegador real (Playwright MCP), sem erro de CORS, com a UI refletindo dados reais e o efeito final de cada acao confirmado; evidencia em `review/e2e-verification.md`. Sem essa verificacao, a entrega NAO pode ser marcada `DONE` — no maximo `PARTIAL` com o gap registrado** (N/A se nao houver front separado do back)
 - [ ] fluxos criticos que exigem login foram cobertos na Fase 9.5 usando credenciais de seed documentadas no PRD; se o ambiente tem seed/demo mas nenhuma credencial conhecida (so hash sem plaintext), isso foi tratado como lacuna real — corrigido (senha de seed redefinida e documentada) quando possivel, ou registrado explicitamente como fluxo autenticado nao verificado
 - [ ] entregaveis finais preenchidos na raiz de execucao
-- [ ] `report/handoff.json` do estagio orchestrador gravado em `.orchestration/<slug>/` (para o Executor), com `upstream` apontando o handoff do Pensador quando em modo conjunto
+- [ ] `report/handoff.json` do estagio orchestrador gravado em `.orchestrator/runs/<slug>/` (para o Executor), com `upstream` apontando o handoff do Pensador quando em modo conjunto
 - [ ] contagem de tokens por agente consolidada em `report/implementation-report.md` e `report/subagents-context.md`
 - [ ] `plan/tasks-classification.md` e `plan/waves.md` registram `agyModel` e `agyModelSource` nas tasks AGY
 - [ ] decisoes `agyModelSource: adaptive` possuem `agyModelEvidence`, amostra comparavel e respeitam override/piso heuristico; sem evidencia, o fallback foi heuristic
+- [ ] `orchestration-lifecycle.mjs watch` foi iniciado em segundo plano imediatamente apos o dispatch de cada wave; nenhuma wave ficou sem watch ativo entre o dispatch e a reconciliacao
 - [ ] lifecycle polling usou adapter configurado ou manteve `UNKNOWN`; interrupt/retry/cancel real nunca foi presumido apenas pelo estado local
 - [ ] `.orchestrator/telemetry.jsonl` recebeu apenas metadados allowlisted; prompt, conteudo, diff, source, raw output e secrets nao foram persistidos/exportados
 - [ ] Fase 12 criou `learning/learning-report.md`; lessons ficaram CANDIDATE ate validacao independente e nenhuma alteracao automatica foi feita no `SKILL.md`
 - [ ] Learned Recipes aplicadas foram selecionadas por trigger deterministico e tiveram outcome registrado; Curator permaneceu dry-run salvo acao explicita, com backup antes de mutacao
 - [ ] `orchestrator-knowledge.mjs history-project` e `orchestration-telemetry.mjs project` projetaram o resultado terminal da run
-- [ ] `orchestration-state.mjs audit --dir ".orchestration/<slug>"` retornou `complete: true`
-- [ ] `orchestration-state.mjs verify --dir ".orchestration/<slug>"` passou antes da entrega
+- [ ] `orchestration-state.mjs audit --dir ".orchestrator/runs/<slug>"` retornou `complete: true`
+- [ ] `orchestration-state.mjs verify --dir ".orchestrator/runs/<slug>"` passou antes da entrega
 
 ## Arquivos de apoio
 

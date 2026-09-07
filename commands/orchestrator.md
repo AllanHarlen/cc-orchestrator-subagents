@@ -99,7 +99,7 @@ Politica de cota, de sandbox Codex e de fallback por `reasonCode` (`QUOTA_EXHAUS
 11. Entrega duravel ainda nao publicada
 12. `learning/learning-report.md`, candidate lessons, history/telemetry, audit terminal e publicacao
 
-Cada run mantem `.orchestration/<slug>/state.json` e `events.jsonl`; o projeto mantem `.orchestrator/project-memory.md`, `knowledge.db`, `history.db`, `telemetry.jsonl` e `learned/`. Toda transicao terminal e persistida antes de ser anunciada; uma task cujo resultado nao puder ser determinado apos interrupcao fica `UNKNOWN`, nunca `FAILED` por suposicao. Memoria aceita apenas fatos com fonte comprovada, e learning nunca edita a skill automaticamente.
+Cada run mantem `.orchestrator/runs/<slug>/state.json` e `events.jsonl`; o projeto mantem `.orchestrator/project-memory.md`, `knowledge.db`, `history.db`, `telemetry.jsonl` e `learned/`. Toda transicao terminal e persistida antes de ser anunciada; uma task cujo resultado nao puder ser determinado apos interrupcao fica `UNKNOWN`, nunca `FAILED` por suposicao. Memoria aceita apenas fatos com fonte comprovada, e learning nunca edita a skill automaticamente.
 
 ---
 
@@ -197,37 +197,37 @@ Leia `.orchestrator/project-memory.md` junto do PRD. Nao use fatos `STALE`, `CON
 
 ### Passo 4 - Conduzir o workflow
 
-Siga `SKILL.md` + `references/*.md`. Crie os artefatos de coordenacao em `.orchestration/<nome>/`, onde `<nome>` e um identificador descritivo em kebab-case derivado do PRD/spec. Use `assets/*.md` para os templates.
+Siga `SKILL.md` + `references/*.md`. Crie os artefatos de coordenacao em `.orchestrator/runs/<nome>/`, onde `<nome>` e um identificador descritivo em kebab-case derivado do PRD/spec. Use `assets/*.md` para os templates.
 
 Assim que `<nome>`/`<slug>` estiver resolvido, inicialize o run antes de continuar:
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/scripts/orchestration-state.mjs" init \
-  --slug "<nome>" --dir ".orchestration/<nome>" --phase 1
+  --slug "<nome>" --dir ".orchestrator/runs/<nome>" --phase 1
 ```
 
-Depois de gerar `plan/tasks-classification.md` e `plan/waves.md`, rode `node "${CLAUDE_PLUGIN_ROOT}/skills/orchestrator-multi-agent-development/scripts/validate-routing.mjs" ".orchestration/<nome>"` ou o caminho equivalente via `${CLAUDE_SKILL_DIR}`. Se falhar, corrija os artefatos antes de delegar.
+Depois de gerar `plan/tasks-classification.md` e `plan/waves.md`, rode `node "${CLAUDE_PLUGIN_ROOT}/skills/orchestrator-multi-agent-development/scripts/validate-routing.mjs" ".orchestrator/runs/<nome>"` ou o caminho equivalente via `${CLAUDE_SKILL_DIR}`. Se falhar, corrija os artefatos antes de delegar.
 
 Depois que o roteamento passar, sincronize tasks/waves no snapshot:
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/scripts/orchestration-state.mjs" sync \
-  --dir ".orchestration/<nome>"
+  --dir ".orchestrator/runs/<nome>"
 ```
 
 Antes do validator final, tasks AGY sem override consultam `orchestration-router.mjs route`. Preserve o piso heuristico e grave a decisao com `--record`; `source: adaptive` exige `agyModelEvidence`, caso contrario mantenha `heuristic`. Depois de `sync`, execute `orchestration-worktree.mjs plan` por wave. So `ISOLATED` pode ser criado/rodado concorrentemente; `SERIAL`/`UNSCOPED` aguardam.
 
-Antes/depois de cada fase, persista `phase --status RUNNING|DONE|FAILED|BLOCKED|CANCELLED|UNKNOWN` com evidencia. Antes de lancar um subagente, crie a worktree elegivel, adquira lease e persista a task como `RUNNING` com executor, modelo, attempt e `sessionId`/`conversationId`. Durante a Fase 6, use `orchestration-lifecycle.mjs watch/tick` com adapter quando disponivel; grave heartbeat somente quando houver atividade observavel e execute `sweep`. O retorno externo redigido deve ser persistido antes de `DONE`/`FAILED`/`BLOCKED` e antes de anunciar o resultado. Use apenas estados canonicos e preserve quota/auth/timeout em `reasonCode`.
+Antes/depois de cada fase, persista `phase --status RUNNING|DONE|FAILED|BLOCKED|CANCELLED|UNKNOWN` com evidencia. Antes de lancar um subagente, crie a worktree elegivel, adquira lease e persista a task como `RUNNING` com executor, modelo, attempt e `sessionId`/`conversationId`. Assim que a ultima task da wave estiver `RUNNING`, inicie `orchestration-lifecycle.mjs watch` em segundo plano — obrigatorio, com ou sem `--adapter-config` (sem adapter ele ja rebaixa RUNNING nao confirmado para `UNKNOWN` e marca `STALLED` por inatividade). `updateCompletionGate --gate monitoring --status DONE` recusa fechar sem ao menos um tick/sweep ter rodado. O retorno externo redigido deve ser persistido antes de `DONE`/`FAILED`/`BLOCKED` e antes de anunciar o resultado. Use apenas estados canonicos e preserve quota/auth/timeout em `reasonCode`.
 
 Na integracao, use `ready` + `integrate` para worktrees e os scripts `inspect-diff`, `validate-task-scope`, `inspect-api-ui`, `validate-wire-format` e `collect-test-results` para mecanica repetitiva. Se a operacao exigiria tres ou mais Greps/Reads, loop ou comparacao mecanica, a regra e usar script deterministico e consumir seu JSON condensado.
 
 Depois de reports/handoff e da entrega duravel da Fase 11, execute a Fase 12 antes de fechar a run:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/orchestration-learning.mjs" run --dir ".orchestration/<nome>"
-node "${CLAUDE_PLUGIN_ROOT}/scripts/orchestrator-knowledge.mjs" history-project --dir ".orchestration/<nome>"
-node "${CLAUDE_PLUGIN_ROOT}/scripts/orchestration-telemetry.mjs" project --dir ".orchestration/<nome>"
-node "${CLAUDE_PLUGIN_ROOT}/scripts/orchestration-state.mjs" audit --dir ".orchestration/<nome>"
+node "${CLAUDE_PLUGIN_ROOT}/scripts/orchestration-learning.mjs" run --dir ".orchestrator/runs/<nome>"
+node "${CLAUDE_PLUGIN_ROOT}/scripts/orchestrator-knowledge.mjs" history-project --dir ".orchestrator/runs/<nome>"
+node "${CLAUDE_PLUGIN_ROOT}/scripts/orchestration-telemetry.mjs" project --dir ".orchestrator/runs/<nome>"
+node "${CLAUDE_PLUGIN_ROOT}/scripts/orchestration-state.mjs" audit --dir ".orchestrator/runs/<nome>"
 ```
 
 Somente com `audit.complete: true`, todas as tasks/gates/evidencias/artefatos completos e Phase 12 `DONE`, marque `run --status DONE`, rode `verify`, reprojete history/telemetry e publique a mensagem ao usuario. Candidate lessons nunca sao promovidas automaticamente nem alteram `SKILL.md`.
@@ -251,7 +251,7 @@ Mantenha o usuario informado com mensagens curtas:
 - `Context7 MCP detectado; vou exigir docs atuais nos prompts dos subagentes`
 - `Codebase Memory MCP detectado; vou consultar index_status antes de usar o grafo como evidencia`
 - `Project Memory auditada; carreguei apenas fatos validados e projetei o historico pesquisavel`
-- `especificacao ingerida; classificando tasks em .orchestration/<nome>`
+- `especificacao ingerida; classificando tasks em .orchestrator/runs/<nome>`
 - `wave <N>: <X> tasks isoladas em worktrees e <Y> serializadas por overlap/escopo`
 - `lancei <N> subagentes em paralelo para a onda <N>, aviso quando completarem`
 - no fim: caminhos do `report/workflow-log.md`, `report/implementation-report.md`, `report/subagents-context.md` e `learning/learning-report.md` + resumo e instrucoes de negocio
@@ -261,7 +261,7 @@ Mantenha o usuario informado com mensagens curtas:
 
 ## Modos
 
-Cada ramo abaixo **substitui** a execucao de PRD: nao inicialize run, nao crie `.orchestration/<slug>/`, nao ingira especificacao e nao delegue agentes.
+Cada ramo abaixo **substitui** a execucao de PRD: nao inicialize run, nao crie `.orchestrator/runs/<slug>/`, nao ingira especificacao e nao delegue agentes.
 
 ### Modo help
 
@@ -359,19 +359,19 @@ Para cada `pendingExternalProbes`:
 1. consulte `TaskList` e as capacidades de retomada/status do subagente instalado;
 2. para Codex, correlacione pelo `sessionId`/task ID; para AGY, correlacione pelo `conversationId` e pelo retorno persistido do bridge;
 3. se a integracao nao expuser status autoritativo, mantenha `UNKNOWN` e use Git, arquivos e validacoes apenas como evidencia — nunca como prova isolada de sucesso;
-4. grave um `.orchestration/<slug>/reconciliation-probe.json` sem secrets, no formato de `references/persistent-state.md`, e rode:
+4. grave um `.orchestrator/runs/<slug>/reconciliation-probe.json` sem secrets, no formato de `references/persistent-state.md`, e rode:
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/scripts/orchestration-state.mjs" reconcile \
-  --dir ".orchestration/<slug>" \
-  --probe-file ".orchestration/<slug>/reconciliation-probe.json"
+  --dir ".orchestrator/runs/<slug>" \
+  --probe-file ".orchestrator/runs/<slug>/reconciliation-probe.json"
 ```
 
 Quando `.orchestrator/executor-control.json` existir e validar contra `executor-control-config.schema.json`, prefira a reconciliacao automatizada:
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/scripts/orchestration-lifecycle.mjs" tick \
-  --dir ".orchestration/<slug>" --resume \
+  --dir ".orchestrator/runs/<slug>" --resume \
   --adapter-config ".orchestrator/executor-control.json"
 ```
 

@@ -463,16 +463,52 @@ export function cancelRunLifecycle(artifactDir, options = {}) {
   };
 }
 
+// Tasks a watch loop still needs to keep an eye on. Once none of these remain
+// (or the run itself reached a terminal status), further ticks would just
+// reconfirm nothing changed — stop instead of running unattended forever.
+const ACTIVE_TASK_STATUSES = new Set(["RUNNING", "STALLED", "UNKNOWN"]);
+const TERMINAL_RUN_STATUSES = new Set(["DONE", "CANCELLED"]);
+
+function watchStopReason(summary) {
+  if (!summary) return null;
+  if (TERMINAL_RUN_STATUSES.has(summary.status)) return "RUN_TERMINAL";
+  const hasActiveTask = Object.entries(summary.counts ?? {}).some(
+    ([status, count]) => ACTIVE_TASK_STATUSES.has(status) && count > 0,
+  );
+  return hasActiveTask ? null : "NO_ACTIVE_TASKS";
+}
+
 export async function watchLifecycle(artifactDir, options = {}) {
   const intervalMs = Math.max(1_000, Number(options.intervalSeconds ?? 30) * 1000);
   const maxTicks = options.maxTicks == null ? Number.POSITIVE_INFINITY : Math.max(1, Number(options.maxTicks));
+  const autoStop = options.autoStop !== false;
   const results = [];
+  let stoppedReason = null;
   for (let index = 0; index < maxTicks; index += 1) {
-    results.push(tickLifecycle(artifactDir, options));
+    const result = tickLifecycle(artifactDir, options);
+    results.push(result);
+    if (typeof options.onTick === "function") {
+      options.onTick({
+        tick: index + 1,
+        ranAt: new Date().toISOString(),
+        summary: result.summary,
+        sweep: result.sweep,
+        actions: result.actions,
+      });
+    }
+    if (autoStop) {
+      stoppedReason = watchStopReason(result.summary);
+      if (stoppedReason) break;
+    }
     if (index + 1 >= maxTicks) break;
     await new Promise((resolvePromise) => setTimeout(resolvePromise, intervalMs));
   }
-  return { ticks: results.length, last: results.at(-1), results: options.includeAll ? results : undefined };
+  return {
+    ticks: results.length,
+    last: results.at(-1),
+    stoppedReason,
+    results: options.includeAll ? results : undefined,
+  };
 }
 
 export function lifecycleProbeExists(artifactDir) {

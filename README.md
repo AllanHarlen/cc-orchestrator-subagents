@@ -221,7 +221,16 @@ The boundary is intentional: the LLM makes novel decisions; deterministic script
 
 ### What to Commit
 
-Every new run lives under `.orchestrator/runs/<name>/`, alongside `project-config.md`, `worktrees/`, `history.db` and `knowledge.db` — one hidden root for everything this plugin writes to your project. (Runs created before this version stay at `.orchestration/<name>/`, read but never migrated; older docs and scripts you may still have around can reference that path.) Not everything under `.orchestrator/` shares the same fate in Git, though. Commit `events.jsonl` (the run's source of truth), the run's Markdown/handoff artifacts, `project-memory.md`, and `learned/` — that is what makes `resume` and accumulated knowledge portable across machines. Always ignore `.orchestrator/worktrees/` (live Git worktrees — cleaning or committing them breaks a running wave), `history.db`, `telemetry.jsonl` (both reconstructible projections), `backups/`, and SQLite's `*.db-wal`/`*.db-shm`:
+Every new run lives under `.orchestrator/runs/<name>/`, alongside `project-config.md`, `worktrees/`, `history.db` and `knowledge.db` — one hidden root for everything this plugin writes to your project. (Runs created before this version stay at `.orchestration/<name>/`, read but never migrated; older docs and scripts you may still have around can reference that path.)
+
+**Default: gitignore all of it.** `.orchestration/` and `.orchestrator/` are excluded from the target project's Git history by default (same convention `cc-pensador` already uses for `.pensador/`):
+
+```gitignore
+.orchestration/
+.orchestrator/
+```
+
+This is a deliberate reversal of the previous default, which committed `events.jsonl`, the run's Markdown/handoff artifacts, `project-memory.md`, `learned/` and `knowledge.db`. Versioning that state has a sharp edge: deleting those directories from disk does not remove them from Git — `git status` just shows them as deleted-but-tracked, and the next ordinary commit that rewrites `state.json`/`events.jsonl` at those paths (which any run does) resurrects the old content. If you want the old behavior back (cross-machine `resume`/audit trail via Git), use the narrower opt-in block below instead, and accept the risk it reintroduces — a versioned or `git clean -fdx`'d worktree breaks a running wave, and SQLite in WAL mode conflicts on every concurrent commit:
 
 ```gitignore
 .orchestrator/worktrees/
@@ -232,7 +241,7 @@ Every new run lives under `.orchestrator/runs/<name>/`, alongside `project-confi
 *.db-shm
 ```
 
-The full per-path table is in `references/persistent-state.md`.
+Flipping the default does not retroactively untrack history a project already committed — that needs a dedicated `git rm --cached -r .orchestration .orchestrator` commit; the orchestrator does not automate it. The full per-path table (for the opt-in case) is in `references/persistent-state.md`.
 
 ## Codex: Model and Effort
 

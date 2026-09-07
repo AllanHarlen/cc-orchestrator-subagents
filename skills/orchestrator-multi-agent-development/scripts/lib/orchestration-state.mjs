@@ -118,7 +118,12 @@ export const COMPLETION_GATE_DEFINITIONS = Object.freeze({
   // stall nunca rodou em 3h30. Este gate torna a fase 6 tao obrigatoria
   // quanto qualquer outra: fechar a fase 7 sem fechar a 6 e agora impossivel
   // (assertPhaseTransition), e fechar a 6 sem evidencia tambem
-  // (GATE_DONE_REQUIRES_EVIDENCE em updateCompletionGate).
+  // (GATE_DONE_REQUIRES_EVIDENCE em updateCompletionGate). Acompanhamento
+  // (analise-run-oficina-saas-20260906.md): evidencia por si so nao provava
+  // que o monitoramento rodou *durante* a fase, so que algo foi escrito antes
+  // de fecha-la — uma wave inteira podia terminar em segundo plano sem que
+  // tick/watch/sweep nunca rodasse. updateCompletionGate agora tambem exige
+  // `lifecycle.lastSweepAt` presente (GATE_MONITORING_REQUIRES_SWEEP).
   monitoring: { phase: 6, label: "Monitoring telemetry" },
   backendReview: { phase: 8, label: "Back-end review" },
   frontendReview: { phase: 9, label: "Front-end review" },
@@ -2145,6 +2150,20 @@ export function updateCompletionGate(artifactDir, gateId, status, options = {}) 
       throw new OrchestrationStateError(
         "GATE_DONE_REQUIRES_EVIDENCE",
         `Completion gate ${normalizedGateId} cannot be DONE without evidence`,
+      );
+    }
+    // Acompanhamento estrutural (analise-run-oficina-saas-20260906.md): o gate
+    // acima ja exige evidencia para fechar a fase 6, mas nao exige que o
+    // monitoramento tenha de fato rodado *durante* ela — uma run pode
+    // despachar uma wave e nunca mais chamar tick/watch/sweep, ficando parada
+    // com resultados prontos e ninguem sabendo. So a presenca de
+    // `lifecycle.lastSweepAt` (nao uma janela de recencia, que seria flaky
+    // para waves que fecham rapido) prova que sweepStalledTasks rodou ao
+    // menos uma vez nesta run.
+    if (normalizedGateId === "monitoring" && normalizedStatus === "DONE" && !state.lifecycle?.lastSweepAt) {
+      throw new OrchestrationStateError(
+        "GATE_MONITORING_REQUIRES_SWEEP",
+        "Completion gate monitoring cannot be DONE before orchestration-lifecycle.mjs tick/watch has run at least once (lifecycle.lastSweepAt is empty)",
       );
     }
 

@@ -6,7 +6,7 @@ Depois da entrega durável da Fase 11 e antes de `run DONE`:
 
 ```bash
 node "${CLAUDE_SKILL_DIR}/scripts/orchestration-learning.mjs" run \
-  --root . --dir .orchestration/<slug>
+  --root . --dir .orchestrator/runs/<slug>
 ```
 
 O engine lê estado/eventos/reviews, cria `learning/learning-report.md` atomicamente e persiste candidate lessons em `knowledge.db`. Candidatos registram trigger, problema, regra, action, confidence, reuse potential e evidências. A fase nunca altera `SKILL.md` e nunca promove automaticamente.

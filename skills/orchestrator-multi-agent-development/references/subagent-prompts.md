@@ -27,10 +27,10 @@ prompt de entrada o orquestrador ja tinha, porque foi ele que montou. A camada c
 reescrevendo o prompt sem devolver isolamento em troca. Por isso o despacho e direto:
 
 1. Persista o corpo do prompt abaixo (com os placeholders preenchidos) em
-   `.orchestration/<slug>/run/prompts/<taskId>.md` — nunca em argv (ver "Prompt efetivo como
+   `.orchestrator/runs/<slug>/run/prompts/<taskId>.md` — nunca em argv (ver "Prompt efetivo como
    artefato da run" mais abaixo).
 2. Meca o prompt: `node "${CLAUDE_SKILL_DIR}/scripts/check-prompt-budget.mjs" --agent codex --file
-   .orchestration/<slug>/run/prompts/<taskId>.md`. Para Codex isso e apenas indicativo
+   .orchestrator/runs/<slug>/run/prompts/<taskId>.md`. Para Codex isso e apenas indicativo
    (`advisory: true`, nunca falha) porque `--prompt-file` nao passa pelo limite de argv do Windows —
    mas um prompt muito grande ainda degrada qualidade de contexto, então considere dividir por
    entregaveis mesmo sem erro.
@@ -42,7 +42,7 @@ reescrevendo o prompt sem devolver isolamento em troca. Por isso o despacho e di
 ```bash
 node "<companionPath>" task \
   --cwd "<workspace da task>" \
-  --prompt-file ".orchestration/<slug>/run/prompts/<taskId>.md" \
+  --prompt-file ".orchestrator/runs/<slug>/run/prompts/<taskId>.md" \
   --model gpt-5.6-terra --effort medium --write --background --json
 # → { jobId, status: "queued", logFile }  —  jobId e o sessionId da task no state
 # resultado grande depois: node "<companionPath>" result <jobId> --json
@@ -140,8 +140,8 @@ Retorno:
 
 ```text
 --mode accept-edits --format stream-json --model <AGY_MODEL> [--effort <AGY_EFFORT>] [--timeout <AGY_TIMEOUT>] [--parallel] [--subagent-model <SUBAGENT_MODEL>] --dirs <DIRS> \
---task-file ".orchestration/<slug>/run/prompts/<taskId>.md" \
---dump-prompt ".orchestration/<slug>/run/prompts/<taskId>.agy.txt"
+--task-file ".orchestrator/runs/<slug>/run/prompts/<taskId>.md" \
+--dump-prompt ".orchestrator/runs/<slug>/run/prompts/<taskId>.agy.txt"
 ```
 
 O bridge resolve aliases com `agy models` e encaminha `--model` nativamente, sem modificar configuracoes do usuario. `stream-json` permite acompanhar `init`, `step_update` e `result`; progresso fica separado em `stderr` e apenas a resposta final segue em `stdout`.
@@ -151,12 +151,12 @@ Passe `--parallel` quando `agyParallel: yes` para a task. Se `agySubagentModel` 
 **Sempre use `--task-file`, nunca argv, para o corpo do prompt abaixo:** o **orquestrador** (nao o
 subagente — `antigravity-coder` nao tem ferramenta de escrita, so `Bash(node *antigravity-bridge.js*)`)
 persiste o corpo em `run/prompts/<taskId>.md` antes de invocar o subagente, e a instrucao do
-subagente e so passar `--task-file ".orchestration/<slug>/run/prompts/<taskId>.md"` para o bridge —
+subagente e so passar `--task-file ".orchestrator/runs/<slug>/run/prompts/<taskId>.md"` para o bridge —
 o proprio bridge le o arquivo. Isso protege o salto Bash→bridge do limite de linha de comando (nao
 muda o orcamento de 28.000 chars do salto bridge→agy, que continua real). Meca o mesmo arquivo antes
 de despachar:
 `node "${CLAUDE_SKILL_DIR}/scripts/check-prompt-budget.mjs" --agent agy --file
-.orchestration/<slug>/run/prompts/<taskId>.md` — para AGY isso e limite duro (`advisory: false`,
+.orchestrator/runs/<slug>/run/prompts/<taskId>.md` — para AGY isso e limite duro (`advisory: false`,
 exit 1 se estourar); acima do limite, divida a task por entregaveis antes de delegar (ver "Regra de
 limite de prompt AGY" em `references/workflow.md`).
 
@@ -313,7 +313,7 @@ impossivel, independente do que o texto do prompt disser.**
 ```bash
 node "<companionPath>" task \
   --cwd "<workspace do review>" \
-  --prompt-file ".orchestration/<slug>/run/prompts/<taskId>-review.md" \
+  --prompt-file ".orchestrator/runs/<slug>/run/prompts/<taskId>-review.md" \
   --model gpt-5.6-sol --effort high --background --json
 # SEM --write. Fallback se companionPath nao resolver: codex:codex-rescue, mesmo corpo de prompt,
 # sem pedir escrita — e registre o fallback em report/workflow-log.md.
@@ -328,10 +328,10 @@ Revise a implementacao back-end realizada pelos subagentes para a especificacao 
 
 Leia:
 - a especificacao (PRD/spec) ingerida
-- .orchestration/<nome>/plan/tasks-classification.md
-- .orchestration/<nome>/plan/waves.md
-- .orchestration/<nome>/contracts/
-- .orchestration/<nome>/report/implementation-report.md secao 13 (matriz de rastreabilidade RF/CA -> evidencia)
+- .orchestrator/runs/<nome>/plan/tasks-classification.md
+- .orchestrator/runs/<nome>/plan/waves.md
+- .orchestrator/runs/<nome>/contracts/
+- .orchestrator/runs/<nome>/report/implementation-report.md secao 13 (matriz de rastreabilidade RF/CA -> evidencia)
 - diff git da branch atual (apenas arquivos back-end)
 
 Verifique:
@@ -381,9 +381,9 @@ Revise a implementacao front-end realizada pelos subagentes para a especificacao
 
 Leia:
 - a especificacao (PRD/spec) ingerida
-- .orchestration/<nome>/plan/tasks-classification.md
-- .orchestration/<nome>/contracts/
-- .orchestration/<nome>/report/implementation-report.md secao 13 (matriz de rastreabilidade RF/CA -> evidencia)
+- .orchestrator/runs/<nome>/plan/tasks-classification.md
+- .orchestrator/runs/<nome>/contracts/
+- .orchestrator/runs/<nome>/report/implementation-report.md secao 13 (matriz de rastreabilidade RF/CA -> evidencia)
 - diff/arquivos front-end alterados
 
 Verifique:

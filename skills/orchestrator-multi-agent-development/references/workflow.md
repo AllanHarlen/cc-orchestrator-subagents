@@ -4,7 +4,7 @@ Este arquivo expande as fases do `SKILL.md`.
 
 ## Layout do diretorio da run
 
-Toda run nova grava os artefatos agrupados por estagio (`state.layoutVersion: 2`). Os caminhos citados nas fases abaixo sao relativos a `.orchestration/<nome>/`:
+Toda run nova grava os artefatos agrupados por estagio (`state.layoutVersion: 2`), sob `.orchestrator/runs/<nome>/` (raiz atual — `currentRunsRoot()` em `artifact-layout.mjs`). Os caminhos citados nas fases abaixo sao relativos a esse diretorio:
 
 ```text
 state.json                  events.jsonl                (raiz: identidade da run)
@@ -17,9 +17,11 @@ evidence/                   saida dos scripts de intelligence
 learning/                   learning-report.md
 ```
 
-`state.json` e `events.jsonl` nunca saem da raiz da run, e o diretorio da run e sempre filho direto de `.orchestration/`: e assim que `resume` e a numeracao de `runId` encontram a run. Runs criadas antes desta versao permanecem no layout plano e continuam legiveis sem migracao. Detalhes e regras de resolucao em `references/persistent-state.md`.
+`state.json` e `events.jsonl` nunca saem da raiz da run. `resume` e a numeracao de `runId` varrem **duas** raizes, atual primeiro (`runRootCandidates()` em `artifact-layout.mjs`): `.orchestrator/runs/<nome>/` (escrita de toda run nova) e `.orchestration/<nome>/` (raiz legada, so leitura — runs criadas antes desta versao permanecem la, nao sao migradas, e continuam legiveis sem intervencao). Nunca passe `--dir ".orchestration/<nome>"` para uma run nova: isso sobrescreve o default de `initRun()` e faz a run nascer na raiz legada por engano. Detalhes e regras de resolucao em `references/persistent-state.md`.
 
-O orquestrador atua somente em projetos com PRD/especificacao ja pronta, em desenvolvimento complexo. Ele nao faz discovery, nao cria plano OpenSpec e nao reabre o entendimento da demanda. Todos os artefatos de coordenacao ficam em `.orchestration/<nome>/`, onde `<nome>` e um identificador descritivo em kebab-case: em **modo conjunto** e o `<slug>` do Pensador (sem `-vN`); em **modo independente** e derivado do PRD. Ver `references/handoff-contract.md`.
+O orquestrador atua somente em projetos com PRD/especificacao ja pronta, em desenvolvimento complexo. Ele nao faz discovery, nao cria plano OpenSpec e nao reabre o entendimento da demanda. Todos os artefatos de coordenacao ficam em `.orchestrator/runs/<nome>/`, onde `<nome>` e um identificador descritivo em kebab-case: em **modo conjunto** e o `<slug>` do Pensador (sem `-vN`); em **modo independente** e derivado do PRD. Ver `references/handoff-contract.md`.
+
+Por padrao, `.orchestrator/` (e a raiz legada `.orchestration/`, se ainda existir no projeto) sao gitignorados — ver "O que versionar" em `persistent-state.md`.
 
 ## Checkpoint transversal e resume
 
@@ -65,7 +67,7 @@ node "${CLAUDE_SKILL_DIR}/scripts/orchestrator-knowledge.mjs" history-project
 
 Leia `.orchestrator/project-memory.md` junto da especificacao. Somente fatos `VALIDATED` com fonte `FILE`, `CONTRACT`, `TEST` aprovado, `RUN_EVENT` ou `USER` entram nessa projecao. Se `audit` marcar `STALE`/`CONFLICT`, exclua o fato da classificacao ate nova validacao. Busque `history-search` apenas por fingerprints, stacks ou problemas relevantes e mantenha o resultado condensado.
 
-Na primeira run do projeto, confira se o `.gitignore` ja cobre os caminhos que nunca devem ser versionados (`.orchestrator/worktrees/`, `.orchestrator/backups/`, `.orchestrator/history.db`, `.orchestrator/telemetry.jsonl`, `*.db-wal`, `*.db-shm`). Se nao cobrir, proponha o bloco ao usuario antes de seguir — worktree versionada ou removida por `git clean` quebra a wave em execucao, e SQLite em WAL gera conflito binario. A tabela por caminho esta em `persistent-state.md`; nao altere o `.gitignore` do usuario sem aprovacao.
+Na primeira run do projeto, confira se o `.gitignore` ja cobre `.orchestration/` e `.orchestrator/` (o padrao atual — ver "O que versionar" em `persistent-state.md`). Se ja tiver so o bloco estreito antigo (`.orchestrator/worktrees/`, `backups/`, `history.db`, `telemetry.jsonl`, `*.db-wal`/`*.db-shm`), trate como opt-in explicito ja feito pelo projeto e nao pergunte de novo. Se nao cobrir nenhum dos dois, proponha o bloco novo ao usuario antes de seguir, via `AskUserQuestion` — commitar esse estado no repositorio alvo faz com que uma limpeza manual (`rm -rf .orchestration .orchestrator`) nao "pegue": qualquer commit futuro do orquestrador sobre esses caminhos ressuscita o conteudo antigo via git normal, e worktree versionada ou removida por `git clean` quebra a wave em execucao. Nao altere o `.gitignore` do usuario sem aprovacao.
 
 ### 1.0 Detectar modo de operacao (conjunto vs independente)
 
@@ -89,24 +91,24 @@ node "${CLAUDE_SKILL_DIR}/scripts/ingest-pensador.mjs" --root . [--slug <slug>]
 3. `result.mode === "joint"` (**Pensador → Orchestrador**): `result.slug`/`result.version` ja
    resolvem a maior versao `-vN` do slug escolhido.
    - `result.pensadorHandoff` presente: leia-o e trate os artefatos referenciados como fonte da
-     verdade. Correlacione pelo `slug` e grave seus artefatos em `.orchestration/<slug>/` (sem
+     verdade. Correlacione pelo `slug` e grave seus artefatos em `.orchestrator/runs/<slug>/` (sem
      `-vN`). `status: BLOCKED`/`PARTIAL` no upstream: pare e peca decisao ao usuario.
    - `result.pensadorHandoff` ausente mas `result.legacyProgress` presente: fallback por convencao
      ja aplicado (`.pensador-progress.json`, `checkpointVersion: 2`) — leia o array `artifacts` de
      `result.legacyProgress` e avise o usuario (`result.warning`).
 
-Assim que o slug estiver resolvido, crie `.orchestration/<slug>/` e inicialize o estado **antes** de ler/produzir novos artefatos dessa execucao:
+Assim que o slug estiver resolvido, crie `.orchestrator/runs/<slug>/` e inicialize o estado **antes** de ler/produzir novos artefatos dessa execucao:
 
 ```bash
 node "${CLAUDE_SKILL_DIR}/scripts/orchestration-state.mjs" init \
-  --slug "<slug>" --dir ".orchestration/<slug>" --phase 1
+  --slug "<slug>" --dir ".orchestrator/runs/<slug>" --phase 1
 ```
 
 Em **modo conjunto** (`result.mode === "joint"`), passe tambem a origem — e o que permite a fase 9.5 se auto-delegar ao Testador mais adiante (secao correspondente da Fase 9.5) e o que `/orquestrador brain-pensador` usa para marcar um slug como ja consumido (`consumedBy`):
 
 ```bash
 node "${CLAUDE_SKILL_DIR}/scripts/orchestration-state.mjs" init \
-  --slug "<slug>" --dir ".orchestration/<slug>" --phase 1 \
+  --slug "<slug>" --dir ".orchestrator/runs/<slug>" --phase 1 \
   --upstream-stage pensador --upstream-slug "<slug>" --upstream-version <result.version> \
   --upstream-handoff-path ".pensador/<slug>-v<result.version>/handoff.json"
 ```
@@ -155,7 +157,7 @@ Ao final da Fase 1, o orquestrador deve conseguir produzir `plan/tasks-classific
 
 ## Fase 2 - Classificacao das tasks
 
-Para cada task extraida do PRD/spec, registre em `.orchestration/<nome>/plan/tasks-classification.md`:
+Para cada task extraida do PRD/spec, registre em `.orchestrator/runs/<nome>/plan/tasks-classification.md`:
 
 - categoria;
 - dependencias;
@@ -179,7 +181,7 @@ Para cada task extraida do PRD/spec, registre em `.orchestration/<nome>/plan/tas
 Depois de escrever `plan/tasks-classification.md`, rode o gate de cobertura RF/CA (quando houver `requirements-index` no upstream) **antes** de montar as ondas — pegar um `RF` sem task aqui e mais barato do que descobrir na Fase 7:
 
 ```bash
-node "${CLAUDE_SKILL_DIR}/scripts/validate-requirements-coverage.mjs"   --requirements ".pensador/<slug>-vN/requirements.json"   --tasks ".orchestration/<nome>/plan/tasks-classification.md"
+node "${CLAUDE_SKILL_DIR}/scripts/validate-requirements-coverage.mjs"   --requirements ".pensador/<slug>-vN/requirements.json"   --tasks ".orchestrator/runs/<nome>/plan/tasks-classification.md"
 ```
 
 ### Regra de roteamento por categoria
@@ -234,7 +236,7 @@ Exemplos:
 
 ## Fase 3 - Ondas
 
-Agrupe tasks em `.orchestration/<nome>/plan/waves.md`.
+Agrupe tasks em `.orchestrator/runs/<nome>/plan/waves.md`.
 
 Cada entrada de `plan/waves.md` deve repetir `assignedAgent` vindo de `plan/tasks-classification.md`. Depois de montar as waves, rode:
 
@@ -242,7 +244,7 @@ Cada entrada de `plan/waves.md` deve repetir `assignedAgent` vindo de `plan/task
 2. Valide o roteamento:
 
 ```bash
-node "${CLAUDE_SKILL_DIR}/scripts/validate-routing.mjs" ".orchestration/<nome>"
+node "${CLAUDE_SKILL_DIR}/scripts/validate-routing.mjs" ".orchestrator/runs/<nome>"
 ```
 
 Se o validador falhar, corrija `plan/tasks-classification.md` e `plan/waves.md` antes de qualquer delegacao.
@@ -251,14 +253,14 @@ Quando o validador passar, sincronize os artefatos com o snapshot. O parser acei
 
 ```bash
 node "${CLAUDE_SKILL_DIR}/scripts/orchestration-state.mjs" sync \
-  --dir ".orchestration/<nome>"
+  --dir ".orchestrator/runs/<nome>"
 ```
 
 Em seguida, planeje isolamento fisico usando `allowedPaths`:
 
 ```bash
 node "${CLAUDE_SKILL_DIR}/scripts/orchestration-worktree.mjs" plan \
-  --dir ".orchestration/<nome>" --wave <N>
+  --dir ".orchestrator/runs/<nome>" --wave <N>
 ```
 
 `ISOLATED` pode executar em worktree paralela; `SERIAL` (overlap) e `UNSCOPED` nao podem compartilhar a mesma execucao concorrente. O plano e persistido antes de qualquer mutacao Git. Leia `worktrees-routing.md`.
@@ -285,7 +287,7 @@ Quando a ingestao trouxe `design-system-files` (ou um `design-system.md` com dir
 
 ### 4.1 Contratos
 
-Crie `.orchestration/<nome>/contracts/*.md` para:
+Crie `.orchestrator/runs/<nome>/contracts/*.md` para:
 
 - toda task `FULLSTACK`;
 - todo par dependente `BACKEND_ONLY` + `FRONTEND_ONLY` que troque dados entre si.
@@ -293,7 +295,7 @@ Crie `.orchestration/<nome>/contracts/*.md` para:
 Valide cada contrato e o conjunto API/UI de forma deterministica:
 
 ```bash
-node "${CLAUDE_SKILL_DIR}/scripts/inspect-contract.mjs" --root "." --path ".orchestration/<nome>/contracts/<id>.md" --persist-knowledge
+node "${CLAUDE_SKILL_DIR}/scripts/inspect-contract.mjs" --root "." --path ".orchestrator/runs/<nome>/contracts/<id>.md" --persist-knowledge
 node "${CLAUDE_SKILL_DIR}/scripts/inspect-api-ui.mjs" --root "." --backend <path> --frontend <path>
 node "${CLAUDE_SKILL_DIR}/scripts/validate-wire-format.mjs" --root "." --contract <path> --payload <path>
 ```
@@ -327,7 +329,7 @@ Para cada task `ISOLATED`, crie a worktree antes do dispatch e use o path retorn
 
 ```bash
 node "${CLAUDE_SKILL_DIR}/scripts/orchestration-worktree.mjs" create \
-  --dir ".orchestration/<nome>" --task <ID>
+  --dir ".orchestrator/runs/<nome>" --task <ID>
 ```
 
 Adquira uma lease com owner estavel antes do dispatch; o Lifecycle Manager a renova quando observa atividade e a libera apos terminal/reconciliacao. Nunca aponte dois executores para a mesma workspace/lease.
@@ -336,21 +338,34 @@ Para cada dispatch, persista a task como `RUNNING` **antes** de iniciar o execut
 
 Quando o executor retornar, converta sinais de quota/auth/tooling para `BLOCKED` + `reasonCode`, ou persista `DONE`/`FAILED`, **antes** de anunciar o retorno na conversa ou avancar a wave.
 
+### O watch e obrigatorio assim que a ultima task da wave for despachada
+
+Numa run real, uma wave inteira (3 tasks Codex em background) terminou em ~5 minutos e ficou sem ninguem saber por um dia inteiro: a sessao ficou ociosa logo apos o dispatch, respondeu uma pergunta do usuario sem relacao e nunca mais voltou a checar o resultado (`analise-run-oficina-saas-20260906.md`). Para evitar essa classe de incidente, assim que **todas** as tasks da wave estiverem persistidas `RUNNING`, antes de qualquer outra acao — inclusive responder a uma pergunta do usuario que nao seja sobre a run — inicie o watcher em segundo plano:
+
+```bash
+node "${CLAUDE_SKILL_DIR}/scripts/orchestration-lifecycle.mjs" watch \
+  --dir ".orchestrator/runs/<nome>" \
+  --interval-seconds 30 --max-ticks 120 \
+  [--adapter-config ".orchestrator/executor-control.json"]
+```
+
+Rode isso como processo em segundo plano (nao bloqueie o turno esperando ele terminar). Isso e obrigatorio **mesmo sem `--adapter-config`**: sem adapter, `tick`/`reconcileRunAtDirectory` ja rebaixa qualquer task `RUNNING` sem confirmacao externa para `UNKNOWN` a partir do primeiro tick (regra 23 do `SKILL.md`, "sem autoridade externa, mantenha UNKNOWN") e `sweepStalledTasks` marca `STALLED` quem ficar realmente ocioso — os dois sao sinais visiveis em `state.json`, bem mais rapidos que o silencio que causou o incidente. O adapter so melhora o sinal (confirma DONE/BLOCKED de verdade em vez de so sinalizar "precisa verificar"); nao e o que torna o watch obrigatorio. `--max-ticks 120` a 30s cobre 1h sem rodar sem supervisao para sempre; se a wave ainda estiver ativa quando o watch parar (`stoppedReason` ausente porque bateu o teto), reemita `watch` ou faca `tick` periodico. O watch imprime uma linha NDJSON `{"type":"tick",...}` por tick — inspecionavel com o processo ja rodando, nao so no final. `updateCompletionGate --gate monitoring --status DONE` recusa fechar (`GATE_MONITORING_REQUIRES_SWEEP`) enquanto `lifecycle.lastSweepAt` estiver vazio, ou seja, enquanto nenhum tick/sweep tiver rodado nesta run.
+
 ### Prompt efetivo como artefato da run
 
 Antes de cada dispatch (Codex ou AGY), monte o corpo do prompt seguindo o template de
 `subagent-prompts.md` com os placeholders preenchidos, e **persista-o em arquivo antes de
 delegar** — nunca so em memoria, nunca so em argv:
 
-- `.orchestration/<slug>/run/prompts/<taskId>.md` para implementacao/handoff/ajuste;
-- `.orchestration/<slug>/run/prompts/<taskId>-review.md` para review (Fases 8/9).
+- `.orchestrator/runs/<slug>/run/prompts/<taskId>.md` para implementacao/handoff/ajuste;
+- `.orchestrator/runs/<slug>/run/prompts/<taskId>-review.md` para review (Fases 8/9).
 
 Isso alimenta dois pontos que antes nao existiam: o prompt que de fato chegou na CLI vira algo
 auditavel depois (nao so o retorno do subagente, que e o unico rastro hoje), e a medicao do
 orcamento abaixo passa a medir o arquivo real, nao uma estimativa mental.
 
 Para AGY, ao invocar o `antigravity-coder`/`antigravity-agent`, passe tambem
-`--dump-prompt ".orchestration/<slug>/run/prompts/<taskId>.agy.txt"` (ver `subagent-prompts.md`
+`--dump-prompt ".orchestrator/runs/<slug>/run/prompts/<taskId>.agy.txt"` (ver `subagent-prompts.md`
 Secao 2) — o bridge grava o prompt final **da run real** (pos fallback de overflow, nao um dry run)
 e um sidecar `<path>.audit.json` com `{ promptChars, limit, degraded, droppedFiles, included,
 skipped }`. Preencha os campos "Prompt enviado" e "Contexto degradado" de
@@ -369,7 +384,7 @@ Antes de delegar, meca o arquivo persistido (nao conte manualmente):
 
 ```bash
 node "${CLAUDE_SKILL_DIR}/scripts/check-prompt-budget.mjs" --agent agy \
-  --file ".orchestration/<slug>/run/prompts/<taskId>.md"
+  --file ".orchestrator/runs/<slug>/run/prompts/<taskId>.md"
 ```
 
 **Threshold:** 28.000 chars. Prompts reais com aspas, barras invertidas, XML e quebras de linha inflariam ~14% na linha de comando codificada pelo Node.js no Windows, causando `ENAMETOOLONG`. O threshold conservador garante margem segura. Para AGY isso e limite duro: `ok: false` sai com exit 1 e o chamador deve tratar a falha antes de despachar.
@@ -445,7 +460,7 @@ O orquestrador consolida as skills utilizadas por subagente em `report/subagents
 
 ## Fase 6 - Monitoramento
 
-Esta fase tem completion gate proprio (`monitoring`, sempre obrigatorio) — fechar a Fase 7 sem antes fechar a Fase 6 e recusado por `assertPhaseTransition`. Feche com evidencia real (`run/monitoring.md` atualizado, ou `--evidence` apontando para o que a Fase 6 de fato produziu): `orchestration-state.mjs gate --gate monitoring --status DONE --evidence file:run/monitoring.md`. Isso existe porque, numa run real, a Fase 6 nunca foi executada de fato — o `phaseHistory` mostrou fases fechando em lote e a telemetria por task (conversationId, modelo resolvido, duracao real, retentativa) ficou vazia em todas as tasks, sem que nada tivesse exigido essa evidencia.
+Esta fase tem completion gate proprio (`monitoring`, sempre obrigatorio) — fechar a Fase 7 sem antes fechar a Fase 6 e recusado por `assertPhaseTransition`. Feche com evidencia real (`run/monitoring.md` atualizado, ou `--evidence` apontando para o que a Fase 6 de fato produziu): `orchestration-state.mjs gate --gate monitoring --status DONE --evidence file:run/monitoring.md`. Isso existe porque, numa run real, a Fase 6 nunca foi executada de fato — o `phaseHistory` mostrou fases fechando em lote e a telemetria por task (conversationId, modelo resolvido, duracao real, retentativa) ficou vazia em todas as tasks, sem que nada tivesse exigido essa evidencia. O mesmo comando tambem recusa (`GATE_MONITORING_REQUIRES_SWEEP`) se `tick`/`watch`/`sweep` nunca rodou nesta run — evidencia sozinha nao prova que o monitoramento aconteceu *durante* a fase, so que algo foi escrito antes de fecha-la. Ver "O watch e obrigatorio..." na Fase 5.
 
 Estados canonicos persistidos:
 
@@ -466,20 +481,20 @@ Atualize heartbeat apenas quando houver progresso observavel (novo retorno/token
 
 ```bash
 node "${CLAUDE_SKILL_DIR}/scripts/orchestration-state.mjs" heartbeat \
-  --dir ".orchestration/<nome>" --task <ID> \
+  --dir ".orchestrator/runs/<nome>" --task <ID> \
   --api-calls <N> --tool-calls <N> --current-tool <tool> --in-tool <true|false>
 
 node "${CLAUDE_SKILL_DIR}/scripts/orchestration-state.mjs" sweep \
-  --dir ".orchestration/<nome>"
+  --dir ".orchestrator/runs/<nome>"
 ```
 
 Defaults: 450s sem progresso fora de tool, 1200s dentro de tool e 120s de grace period. `STALLED` recomenda interrupcao + reconciliacao; nao significa `FAILED` e nao autoriza retry imediato. Heartbeat real durante a grace period pode reativar `STALLED -> RUNNING`.
 
-Prefira o manager continuo ao polling manual quando houver adapter configurado:
+O manager continuo (`watch`, ja iniciado obrigatoriamente na Fase 5 — ver "O watch e obrigatorio...") substitui o polling manual de heartbeat/sweep acima. `--adapter-config` e opcional mas melhora o sinal quando disponivel:
 
 ```bash
 node "${CLAUDE_SKILL_DIR}/scripts/orchestration-lifecycle.mjs" watch \
-  --dir ".orchestration/<nome>" \
+  --dir ".orchestrator/runs/<nome>" \
   --adapter-config ".orchestrator/executor-control.json" \
   --interval-seconds 30
 ```
@@ -489,7 +504,7 @@ O adapter recebe apenas placeholders allowlisted e roda sem shell. Cada probe br
 **Ler de volta o que as CLIs ja publicaram.** AGY grava `conversationId`/modelo resolvido no log JSONL do bridge (`bridge.exit`, `%LOCALAPPDATA%/agy/cc-plugin-logs/` ou `CC_ANTIGRAVITY_LOG_PATH`); Codex grava o thread id no sidecar de job e o **modelo efetivamente resolvido** no rollout de sessao (`~/.codex/sessions/YYYY/MM/DD/*.jsonl`, evento `thread_settings_applied` — a unica fonte que revela quando o modelo pedido e o que de fato rodou divergem, ver Achado 13 da run oficina-saas-20260905-001). Depois de cada dispatch, ou em lote ao fechar a fase, rode:
 
 ```bash
-node "${CLAUDE_SKILL_DIR}/scripts/import-executor-telemetry.mjs" --dir ".orchestration/<nome>" --task <ID> --root "." \
+node "${CLAUDE_SKILL_DIR}/scripts/import-executor-telemetry.mjs" --dir ".orchestrator/runs/<nome>" --task <ID> --root "." \
   --agy-log "<path do log do bridge>" --agy-pid <pid> \
   --codex-job "<path do sidecar de job>" --codex-rollout "<path do rollout>"
 ```
@@ -550,8 +565,8 @@ Grava `conversationId`/`sessionId`, `resolvedModel`, `codexEffort` efetivo, `sta
 Para cada worktree isolada concluida, marque `ready` (commit recuperavel) e integre serialmente na branch de integracao. O root produtivo deve estar limpo fora dos metadados do orquestrador. Em conflito, persista `CONFLICT` e pare; nao aborte, escolha lado ou limpe a worktree silenciosamente.
 
 ```bash
-node "${CLAUDE_SKILL_DIR}/scripts/orchestration-worktree.mjs" ready --dir ".orchestration/<nome>" --task <ID>
-node "${CLAUDE_SKILL_DIR}/scripts/orchestration-worktree.mjs" integrate --dir ".orchestration/<nome>" --task <ID>
+node "${CLAUDE_SKILL_DIR}/scripts/orchestration-worktree.mjs" ready --dir ".orchestrator/runs/<nome>" --task <ID>
+node "${CLAUDE_SKILL_DIR}/scripts/orchestration-worktree.mjs" integrate --dir ".orchestrator/runs/<nome>" --task <ID>
 ```
 
 Valide:
@@ -567,15 +582,15 @@ Valide:
 Use programmatic intelligence para a parte mecanica e persista os evidence IDs na task/gate:
 
 ```bash
-node "${CLAUDE_SKILL_DIR}/scripts/inspect-diff.mjs" --root "." --dir ".orchestration/<nome>" --task <ID> --base <commitBefore>
-node "${CLAUDE_SKILL_DIR}/scripts/validate-task-scope.mjs" --root "." --dir ".orchestration/<nome>" --task <ID>
-node "${CLAUDE_SKILL_DIR}/scripts/collect-test-results.mjs" --root "." --input <resultado> --dir ".orchestration/<nome>" --task <ID> --persist-knowledge --command "<comando>"
+node "${CLAUDE_SKILL_DIR}/scripts/inspect-diff.mjs" --root "." --dir ".orchestrator/runs/<nome>" --task <ID> --base <commitBefore>
+node "${CLAUDE_SKILL_DIR}/scripts/validate-task-scope.mjs" --root "." --dir ".orchestrator/runs/<nome>" --task <ID>
+node "${CLAUDE_SKILL_DIR}/scripts/collect-test-results.mjs" --root "." --input <resultado> --dir ".orchestrator/runs/<nome>" --task <ID> --persist-knowledge --command "<comando>"
 ```
 
 Depois de cada outcome/review, projete a telemetria metadata-only; chamadas repetidas sao idempotentes por event ID:
 
 ```bash
-node "${CLAUDE_SKILL_DIR}/scripts/orchestration-telemetry.mjs" project --dir ".orchestration/<nome>"
+node "${CLAUDE_SKILL_DIR}/scripts/orchestration-telemetry.mjs" project --dir ".orchestrator/runs/<nome>"
 ```
 
 Nao gere projeto de testes automatizados como parte da integracao. A validacao de que cada requisito (`RF`/`CA`) foi implementado corretamente e responsabilidade do review de codigo (Fases 8 e 9), nao de uma suite de testes.
@@ -585,7 +600,7 @@ Nao gere projeto de testes automatizados como parte da integracao. A validacao d
 **Gate deterministico de cobertura RF/CA.** A matriz acima e prosa, montada pelo mesmo agente que escreveu o codigo — sozinha, ela nao pega um `RF` que a Fase 1.2 perdeu ao extrair tasks. Quando o handoff do Pensador trouxe `requirements-index` (role `requirements-index`, `requirements.json`, modo PRD), rode o gate deterministico antes de fechar esta fase:
 
 ```bash
-node "${CLAUDE_SKILL_DIR}/scripts/validate-requirements-coverage.mjs"   --requirements ".pensador/<slug>-vN/requirements.json"   --tasks ".orchestration/<nome>/plan/tasks-classification.md"
+node "${CLAUDE_SKILL_DIR}/scripts/validate-requirements-coverage.mjs"   --requirements ".pensador/<slug>-vN/requirements.json"   --tasks ".orchestrator/runs/<nome>/plan/tasks-classification.md"
 ```
 
 Ele confere que todo `RF` do `requirements.json` esta reivindicado pelo campo `requirementIds` de pelo menos uma task (Fase 2). Sem `requirements-index` no upstream (modo Spec, ou handoff de versao anterior a esse role), o gate degrada para `applicable: false` e nao bloqueia — a cobertura fica so com a matriz de prosa nesse caso, e isso deve ser registrado em `report/workflow-log.md` como limitacao. `REQUIREMENTS_NOT_COVERED` (exit 1) e um achado de lacuna real: volte a Fase 1.2/2 e adicione a task que falta, nunca ignore o `RF` silenciosamente.
@@ -731,13 +746,13 @@ Isso **nao e o mesmo** que o "N/A" do paragrafo acima (front-end inexistente ou 
    - o **efeito final** de cada acao aconteceu de fato (o redirect abriu a aba/rota, o item entrou no carrinho, o registro apareceu na lista, o estado mudou) — nao apenas que a chamada retornou;
    - resolucao **multi-tenant / por host** funciona a partir do browser (o front informa o tenant certo ao back);
    - estados de tela (vazio/carregando/erro/sucesso) se comportam como especificado.
-5. **Capture evidencia**: screenshot e/ou o resumo de console+network dos fluxos exercitados, salvos em `.orchestration/<slug>/review/e2e-verification.md` (e screenshots em `.orchestration/<slug>/review/screenshots/`).
+5. **Capture evidencia**: screenshot e/ou o resumo de console+network dos fluxos exercitados, salvos em `.orchestrator/runs/<slug>/review/e2e-verification.md` (e screenshots em `.orchestrator/runs/<slug>/review/screenshots/`).
 
 **Achados desta fase sao BLOQUEANTES** como qualquer review: registre em `run/monitoring.md`/`report/workflow-log.md`, crie tasks de correcao, corrija pela Fase 7 e **re-verifique no navegador** antes de aprovar. So depois que os fluxos criticos passarem no navegador o orquestrador pode marcar a entrega como `DONE`. Se a ferramenta de navegador nao estiver disponivel no ambiente, **nao invente aprovacao**: registre a limitacao e marque o `report/handoff.json` como `PARTIAL` com o gap explicito ("verificacao E2E no navegador nao executada").
 
 ## Fases 10, 11 e 12 - Relatorio, entrega duravel e learning
 
-Entregaveis obrigatorios (salve na **raiz de execucao do agente**, `.orchestration/<slug>/`):
+Entregaveis obrigatorios (salve na **raiz de execucao do agente**, `.orchestrator/runs/<slug>/`):
 
 - `report/workflow-log.md`
 - `report/subagents-context.md`
@@ -748,9 +763,9 @@ Entregaveis obrigatorios (salve na **raiz de execucao do agente**, `.orchestrati
 
 ### Gravar `report/handoff.json` (para o Executor)
 
-Ao fechar, grave `.orchestration/<slug>/report/handoff.json` com:
+Ao fechar, grave `.orchestrator/runs/<slug>/report/handoff.json` com:
 
-- `handoffVersion: 1`, `stage: "orchestrador"`, `slug` (sem `-vN`), `producer` (plugin + version), `artifactRoot: ".orchestration/<slug>"`, `status` (`DONE`/`PARTIAL`/`BLOCKED`), `summary`, timestamps.
+- `handoffVersion: 1`, `stage: "orchestrador"`, `slug` (sem `-vN`), `producer` (plugin + version), `artifactRoot: ".orchestrator/runs/<slug>"`, `status` (`DONE`/`PARTIAL`/`BLOCKED`), `summary`, timestamps.
 - `upstream`: em modo conjunto, aponta o `handoff.json` do Pensador (`.pensador/<slug>-vN/handoff.json`); em modo independente, `null`.
 - `artifacts[]`: uma entrada por role do vocabulario Orchestrador (secao 5 do handoff contract) — `implementation-report`, `tasks-classification`, `waves`, `api-contracts`, `review-final`, `review-frontend`, `monitoring`, `workflow-log`, `subagents-context` (+ `openspec-change` quando aplicavel), com `path` relativo ao `artifactRoot`.
 - `nextStage`: a cadeia de quatro estagios (`handoff-contract.md` secao 1) tem o Testador entre o Orchestrador e o Executor — aponte para ele por padrao: `consumer: "cc-testador-subagents"`, `entrypoint: "/testador"`, `instructions` orientando a validar a entrega em navegador real via Playwright MCP. Se o plugin `cc-testador-subagents` nao estiver instalado no marketplace do workspace (verifique `.claude-plugin/` ou pergunte ao usuario quando em duvida), degrade para `consumer: "cc-executor-subagents"`, `entrypoint: "/executor"`, `instructions` orientando review plano-vs-entrega e ajustes finos diretamente — e registre essa degradacao no `report/workflow-log.md`.
@@ -770,22 +785,22 @@ Na Fase 12, extraia somente candidates suportados pelo event log/reviews:
 
 ```bash
 node "${CLAUDE_SKILL_DIR}/scripts/orchestration-learning.mjs" run \
-  --dir ".orchestration/<slug>"
+  --dir ".orchestrator/runs/<slug>"
 
 node "${CLAUDE_SKILL_DIR}/scripts/orchestrator-knowledge.mjs" history-project \
-  --dir ".orchestration/<slug>"
+  --dir ".orchestrator/runs/<slug>"
 
 node "${CLAUDE_SKILL_DIR}/scripts/orchestration-telemetry.mjs" project \
-  --dir ".orchestration/<slug>"
+  --dir ".orchestrator/runs/<slug>"
 
 node "${CLAUDE_SKILL_DIR}/scripts/orchestration-state.mjs" audit \
-  --dir ".orchestration/<slug>"
+  --dir ".orchestrator/runs/<slug>"
 
 node "${CLAUDE_SKILL_DIR}/scripts/orchestration-state.mjs" run \
-  --dir ".orchestration/<slug>" --status DONE
+  --dir ".orchestrator/runs/<slug>" --status DONE
 
 node "${CLAUDE_SKILL_DIR}/scripts/orchestration-state.mjs" verify \
-  --dir ".orchestration/<slug>"
+  --dir ".orchestrator/runs/<slug>"
 ```
 
 `audit.complete` precisa ser `true`; falha de gate/integridade bloqueia a entrega. Nao corrija `revision`/`lastEventId` manualmente; reproduza o event log ou restaure um backup coerente. O `report/handoff.json` so pode usar `DONE` quando as tasks obrigatorias estiverem `DONE`, cada task tiver evidence plan e os gates aplicaveis tiverem passado com evidencia; `UNKNOWN`, `STALLED` ou `BLOCKED` pendente exige `PARTIAL`/`BLOCKED` com resumo explicito. Um gate `waivable` (hoje so `browserE2E`) marcado `N/A` via `--required false` aparece em `audit.waivedGates` e por si so ja forca `audit.complete: false` — dispensar a verificacao com motivo documentado nao e o mesmo que ela ter passado; o handoff sai `PARTIAL`, nunca `DONE`, ate o usuario decidir disponibilizar a ferramenta, aceitar formalmente a limitacao (registrando isso fora do gate) ou reverter a dispensa. Projete history/telemetry novamente depois do evento `RUN_STATUS_UPDATED(DONE)` para capturar o terminal e so entao publique a mensagem preparada na Fase 11.

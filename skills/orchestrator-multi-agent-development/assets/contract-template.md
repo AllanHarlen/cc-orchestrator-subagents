@@ -1,6 +1,6 @@
 # Contrato API/UI - <TASK ID OU PAR> - <TITULO>
 
-> Salve em `.orchestration/<nome>/contracts/<task-id-ou-par>.md`.
+> Salve em `.orchestrator/runs/<nome>/contracts/<task-id-ou-par>.md`.
 
 ## Contract Metadata
 

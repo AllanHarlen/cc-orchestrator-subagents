@@ -106,7 +106,7 @@ Com o CBM_MCP ausente — ou indisponível por timeout, erro ou recusa de indexa
 
 ```bash
 node "${CLAUDE_SKILL_DIR}/scripts/inspect-project.mjs" --root . --persist-knowledge
-node "${CLAUDE_SKILL_DIR}/scripts/inspect-diff.mjs" --root . --dir ".orchestration/<slug>" --task <ID> --base <commitBefore>
+node "${CLAUDE_SKILL_DIR}/scripts/inspect-diff.mjs" --root . --dir ".orchestrator/runs/<slug>" --task <ID> --base <commitBefore>
 ```
 
 Registre em `report/workflow-log.md` a limitação: qual MCP faltou, em qual fase, e qual caminho determinístico foi usado no lugar. A regra operacional de intelligence (≥ 3 Greps/Reads, loop de arquivos ou comparação mecânica → script determinístico) vale igual com ou sem grafo; ver `references/programmatic-intelligence.md`.

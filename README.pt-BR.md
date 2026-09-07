@@ -221,7 +221,16 @@ A separação é deliberada: o LLM toma decisões novas; scripts determinístico
 
 ### O que versionar
 
-Toda run nova vive em `.orchestrator/runs/<nome>/`, ao lado de `project-config.md`, `worktrees/`, `history.db` e `knowledge.db` — uma unica raiz oculta para tudo que este plugin grava no seu projeto. (Runs criadas antes desta versão continuam em `.orchestration/<nome>/`, lidas mas nunca migradas; docs/scripts antigos que voce ainda tenha por ai podem referenciar esse caminho.) Nem tudo dentro de `.orchestrator/` tem o mesmo destino no Git, porem. Versione `events.jsonl` (fonte de verdade da run), os artefatos Markdown/handoff da run, `project-memory.md` e `learned/` — é isso que torna `resume` e o conhecimento acumulado portáveis entre máquinas. Sempre ignore `.orchestrator/worktrees/` (worktrees Git ativas — limpar ou versionar quebra uma wave em execução), `history.db`, `telemetry.jsonl` (ambos projeções reconstruíveis), `backups/` e os transitórios `*.db-wal`/`*.db-shm` do SQLite:
+Toda run nova vive em `.orchestrator/runs/<nome>/`, ao lado de `project-config.md`, `worktrees/`, `history.db` e `knowledge.db` — uma unica raiz oculta para tudo que este plugin grava no seu projeto. (Runs criadas antes desta versão continuam em `.orchestration/<nome>/`, lidas mas nunca migradas; docs/scripts antigos que voce ainda tenha por ai podem referenciar esse caminho.)
+
+**Padrão: gitignorar tudo.** `.orchestration/` e `.orchestrator/` inteiros ficam de fora do histórico do projeto alvo por padrão — a mesma convenção que o `cc-pensador` já usa para `.pensador/`:
+
+```gitignore
+.orchestration/
+.orchestrator/
+```
+
+Isso inverte deliberadamente o comportamento anterior, que versionava `events.jsonl`, os artefatos Markdown/handoff da run, `project-memory.md`, `learned/` e `knowledge.db`. Versionar esse estado tem uma consequência séria: apagar essas pastas do disco não as remove do Git — `git status` só marca como deletado-mas-rastreado, e o próximo commit comum do próprio orquestrador que reescrever `state.json`/`events.jsonl` nesses caminhos (o que qualquer run faz normalmente) ressuscita o conteúdo antigo. Se voce quiser o comportamento antigo de volta (resume/auditoria entre máquinas via Git), use o bloco estreito abaixo em vez do de cima, e aceite o risco que ele reintroduz — worktree versionada ou removida por `git clean -fdx` quebra uma wave em execução, e o SQLite em WAL gera conflito binário a cada commit concorrente:
 
 ```gitignore
 .orchestrator/worktrees/
@@ -232,7 +241,7 @@ Toda run nova vive em `.orchestrator/runs/<nome>/`, ao lado de `project-config.m
 *.db-shm
 ```
 
-A tabela completa por caminho está em `references/persistent-state.md`.
+Inverter o padrão não desfaz o histórico que um projeto já commitou — isso exige um `git rm --cached -r .orchestration .orchestrator` num commit dedicado; o orquestrador não automatiza essa migração. A tabela completa por caminho (para o caso de opt-in) está em `references/persistent-state.md`.
 
 ## Codex: modelo e effort
 

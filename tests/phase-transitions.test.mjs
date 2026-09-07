@@ -8,6 +8,7 @@ import {
   auditRunCompletion,
   initRun,
   loadRun,
+  sweepStalledTasks,
   updateCompletionGate,
   updatePhase,
 } from "../skills/orchestrator-multi-agent-development/scripts/lib/orchestration-state.mjs";
@@ -252,6 +253,26 @@ test("updateCompletionGate accepts delegatedTo only alongside N/A on a waivable 
   );
 });
 
+test("updateCompletionGate refuses to close monitoring as DONE before any sweep ran", () => {
+  const { root, artifactDir } = fixture();
+  assert.throws(
+    () =>
+      updateCompletionGate(artifactDir, "monitoring", "DONE", {
+        projectRoot: root,
+        evidence: ["run/monitoring.md"],
+      }),
+    (error) => error instanceof OrchestrationStateError && error.code === "GATE_MONITORING_REQUIRES_SWEEP",
+  );
+  assert.equal(loadRun(artifactDir).state.lifecycle?.lastSweepAt, null);
+
+  sweepStalledTasks(artifactDir, { projectRoot: root });
+  const closed = updateCompletionGate(artifactDir, "monitoring", "DONE", {
+    projectRoot: root,
+    evidence: ["run/monitoring.md"],
+  });
+  assert.equal(closed.state.completionGates.monitoring.status, "DONE");
+});
+
 test("a valid delegation (matching nextStage.consumer) does not block completion", () => {
   const { root, artifactDir } = fixture();
   closeThroughPhase9(root, artifactDir);
@@ -278,6 +299,7 @@ test("a valid delegation (matching nextStage.consumer) does not block completion
     JSON.stringify({ nextStage: { consumer: "cc-testador-subagents", entrypoint: "/testador" } }),
     "utf8",
   );
+  sweepStalledTasks(artifactDir, { projectRoot: root });
   for (const gateId of ["monitoring", "backendReview", "frontendReview", "reports", "handoff", "delivery", "learning"]) {
     updateCompletionGate(artifactDir, gateId, "DONE", { projectRoot: root, evidence: [`${gateId}:PASS`] });
   }

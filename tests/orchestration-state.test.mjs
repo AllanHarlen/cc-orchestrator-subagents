@@ -99,6 +99,9 @@ function completeRun(root, artifactDir) {
   ]) {
     writeFileSync(join(artifactDir, name), name === "handoff.json" ? "{}\n" : `# ${name}\n`, "utf8");
   }
+  // GATE_MONITORING_REQUIRES_SWEEP: fechar o gate monitoring exige que o
+  // sweep de stall tenha rodado ao menos uma vez (lifecycle.lastSweepAt).
+  sweepStalledTasks(artifactDir, { projectRoot: root });
   for (const gateId of [
     "monitoring",
     "backendReview",

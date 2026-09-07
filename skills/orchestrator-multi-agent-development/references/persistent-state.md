@@ -4,7 +4,7 @@ Este documento é o contrato operacional de `state.json`, `events.jsonl`, comple
 
 ## Arquivos e fontes de verdade
 
-Cada `.orchestration/<slug>/` contém, no **layout 2** (`state.layoutVersion: 2`, padrão de toda run nova):
+Cada `.orchestrator/runs/<slug>/` contém, no **layout 2** (`state.layoutVersion: 2`, padrão de toda run nova):
 
 ```text
 state.json                        snapshot materializado
@@ -42,9 +42,11 @@ learning/
 - **1** — todos os artefatos na raiz da run. É o layout de qualquer run criada antes desta versão, e é reconhecido pela ausência do campo no snapshot.
 - **2** — artefatos agrupados por estágio do workflow, como acima.
 
+Isso é ortogonal a **onde** o diretório `<slug>/` em si vive: toda run nova nasce sob `.orchestrator/runs/<slug>/` (`currentRunsRoot()`); `.orchestration/<slug>/` é a raiz legada, só leitura (`legacyRunsRoot()`), para runs criadas antes da consolidação dos dois nomes quase-homônimos (`.orchestration/` vs `.orchestrator/`) num só. Uma run pode estar em qualquer combinação das duas raízes com qualquer um dos dois layouts de arquivo.
+
 Três regras governam a resolução de caminho:
 
-1. `state.json`, `events.jsonl` e `.state.lock` ficam na **raiz** da run nos dois layouts. A descoberta de run (`nextRunId`, `resume`, projeção de history e de knowledge) varre filhos diretos de `.orchestration/` procurando `state.json`; mover esse arquivo esconderia a run e permitiria reuso de `runId`.
+1. `state.json`, `events.jsonl` e `.state.lock` ficam na **raiz** da run nos dois layouts. A descoberta de run (`nextRunId`, `resume`, projeção de history e de knowledge) varre filhos diretos de **ambas** as raízes (`runRootCandidates()` em `artifact-layout.mjs`, atual primeiro) procurando `state.json`; mover esse arquivo esconderia a run e permitiria reuso de `runId`.
 2. **Leitura** tenta o layout 2 e cai para o layout 1. Uma run antiga continua legível sem migração, e um artefato que você colocou manualmente no lugar antigo continua satisfazendo o gate correspondente — o caminho reportado na evidência é o caminho real (`file:review/review-final.md` ou `file:review-final.md`).
 3. **Escrita** segue o layout declarado pela run, e nunca duplica um artefato que já existe no outro layout. Uma run em andamento não é reorganizada no meio do caminho.
 
@@ -54,23 +56,18 @@ Para código que precise resolver esses caminhos, use `scripts/lib/artifact-layo
 
 ## O que versionar
 
-O orquestrador escreve dois diretórios no projeto do usuário: `.orchestration/` (por run) e `.orchestrator/` (por projeto). Eles não têm o mesmo destino no Git, e tratar todos igual causa problema real — banco SQLite em WAL gera conflito binário a cada commit, e um `git clean -fdx` durante uma wave destrói worktrees em execução.
+O orquestrador escreve dois diretórios no projeto do usuário: `.orchestration/`/`.orchestrator/runs/` (por run, atual e legado) e `.orchestrator/` (por projeto — `project-config.md`, `project-memory.md`, `knowledge.db`, `learned/`, `worktrees/`, `history.db`, `backups/`, `telemetry.jsonl`).
 
-| Caminho | Git | Por quê |
-|---|---|---|
-| `.orchestration/<slug>/events.jsonl` | **versionar** | fonte de verdade da run; permite `resume` e auditoria em outra máquina |
-| `.orchestration/<slug>/*.md`, `report/handoff.json`, `contracts/` | **versionar** | artefatos de decisão e entrega |
-| `.orchestration/<slug>/state.json` | opcional | projeção de `events.jsonl`; reconstruível por replay |
-| `.orchestration/<slug>/run/executor-results/`, `evidence/`, `review/screenshots/` | opcional | saída bruta redigida; versionar só se a auditoria exigir |
-| `.orchestrator/project-memory.md` | **versionar** | fatos validados que entram no contexto inicial |
-| `.orchestrator/learned/` | **versionar** | recipes curadas; conhecimento deliberado, não derivado |
-| `.orchestrator/knowledge.db` | **versionar com cuidado** | fonte das lessons/recipes; binário, faça commit com a run parada |
-| `.orchestrator/history.db`, `telemetry.jsonl` | **ignorar** | projeções reconstruíveis (`history-project --rebuild`, `telemetry project`) |
-| `.orchestrator/worktrees/` | **ignorar sempre** | worktrees Git ativas; versionar ou limpar quebra a wave em execução |
-| `.orchestrator/backups/` | **ignorar** | backups locais do Curator; o rollback é operação local |
-| `*.db-wal`, `*.db-shm` | **ignorar sempre** | arquivos transitórios do SQLite em WAL |
+**Padrão: gitignorar tudo.** `.orchestration/` e `.orchestrator/` inteiros ficam de fora do repositório do projeto alvo por padrão — mesma convenção que o `cc-pensador` já usa para `.pensador/`. Isso é uma inversão do comportamento anterior (que versionava `events.jsonl`, os `*.md` de decisão, `project-memory.md`, `learned/` e `knowledge.db` por padrão) e existe porque versionar esse estado tem um efeito colateral sério: apagar as pastas manualmente do disco **não** as remove do histórico do projeto — `git status` só marca como deletado-mas-rastreado, e o primeiro commit seguinte do próprio orquestrador que reescrever `state.json`/`events.jsonl` naqueles caminhos (uma operação normal de qualquer run) ressuscita o conteúdo antigo via mecânica comum do git. Foi exatamente assim que uma run recomeçou "do zero" mas encontrou de volta o estado de uma run anterior que o usuário já tinha apagado (`analise-run-oficina-saas-20260906.md`).
 
-Sugestão de `.gitignore` do projeto:
+Sugestão de `.gitignore` do projeto (padrão):
+
+```gitignore
+.orchestration/
+.orchestrator/
+```
+
+**Opt-in explícito — comportamento antigo.** Se o projeto quer `resume`/auditoria entre máquinas via Git (o que o padrão acima abre mão), use o bloco estreito abaixo em vez do de cima, e aceite o risco que ele reintroduz: worktree versionada ou removida por `git clean -fdx` quebra a wave em execução, e o SQLite em WAL (`knowledge.db`, `history.db`) gera conflito binário a cada commit concorrente.
 
 ```gitignore
 .orchestrator/worktrees/
@@ -81,7 +78,19 @@ Sugestão de `.gitignore` do projeto:
 *.db-shm
 ```
 
-Se o projeto preferir não versionar nada do orquestrador, ignore `.orchestration/` e `.orchestrator/` por inteiro e aceite a consequência explícita: `resume`, memória de projeto e histórico passam a ser locais àquela máquina.
+Com esse bloco estreito, a tabela de referência por caminho (o que efetivamente fica rastreado) é:
+
+| Caminho | Git | Por quê |
+|---|---|---|
+| `.orchestrator/runs/<slug>/events.jsonl` | versionar | fonte de verdade da run; permite `resume` e auditoria em outra máquina |
+| `.orchestrator/runs/<slug>/*.md`, `report/handoff.json`, `contracts/` | versionar | artefatos de decisão e entrega |
+| `.orchestrator/runs/<slug>/state.json` | opcional | projeção de `events.jsonl`; reconstruível por replay |
+| `.orchestrator/runs/<slug>/run/executor-results/`, `evidence/`, `review/screenshots/` | opcional | saída bruta redigida; versionar só se a auditoria exigir |
+| `.orchestrator/project-memory.md` | versionar | fatos validados que entram no contexto inicial |
+| `.orchestrator/learned/` | versionar | recipes curadas; conhecimento deliberado, não derivado |
+| `.orchestrator/knowledge.db` | versionar com cuidado | fonte das lessons/recipes; binário, faça commit com a run parada |
+
+**Limitação residual — projetos que já têm histórico rastreado.** Inverter o padrão não desfaz o que já está commitado. Um projeto que já versionou `.orchestration/<slug>/` (ou `.orchestrator/`) em runs anteriores continua com esse histórico no repositório mesmo depois de adotar o `.gitignore` novo — `git rm --cached -r .orchestration .orchestrator` (num commit dedicado) é a única forma de fato remover o rastreamento existente. O orquestrador não automatiza essa migração; propor o `.gitignore` novo (Fase 1.K) não reescreve histórico.
 
 ## Invariantes
 
@@ -160,7 +169,7 @@ Se o usuário adotar a configuração atual, aplique com escopo `pending` — re
 
 ```bash
 node "${CLAUDE_SKILL_DIR}/scripts/orchestration-state.mjs" project-config-apply \
-  --dir .orchestration/<slug> --scope pending [--reason "<motivo>"]
+  --dir .orchestrator/runs/<slug> --scope pending [--reason "<motivo>"]
 ```
 
 A operação atualiza o snapshot e emite o evento `PROJECT_CONFIG_UPDATED` com `differences`, `appliedTaskIds`, `skippedTaskIds` e o motivo da mudança.
@@ -189,10 +198,10 @@ A aplicabilidade derivada por categoria responde apenas "existe front-end?". Um 
 Quando a run é modo conjunto (Fase 1 detectou `.pensador/<slug>-vN/handoff.json`) e `cc-testador-subagents` está instalado, a Fase 9.5 não roda aqui — o Testador é quem dirige o navegador. Isso **não é um waiver comum**: a verificação vai rodar, só que no próximo estágio da cadeia. Marque explicitamente:
 
 ```bash
-node "$STATE" gate --dir .orchestration/<slug> --gate browserE2E \
+node "$STATE" gate --dir .orchestrator/runs/<slug> --gate browserE2E \
   --status N/A --required false --delegated-to cc-testador-subagents \
   --reason "PENSADOR_CHAIN_DELEGATED_TO_TESTADOR"
-node "$STATE" phase --dir .orchestration/<slug> --phase 9.5 --status N/A \
+node "$STATE" phase --dir .orchestrator/runs/<slug> --phase 9.5 --status N/A \
   --reason "PENSADOR_CHAIN_DELEGATED_TO_TESTADOR"
 ```
 
@@ -203,18 +212,18 @@ node "$STATE" phase --dir .orchestration/<slug> --phase 9.5 --status N/A \
 ```bash
 STATE="${CLAUDE_SKILL_DIR}/scripts/orchestration-state.mjs"
 
-node "$STATE" init --slug <slug> --dir .orchestration/<slug> --phase 1
-node "$STATE" sync --dir .orchestration/<slug>
-node "$STATE" phase --dir .orchestration/<slug> --phase 5 --status RUNNING
-node "$STATE" task --dir .orchestration/<slug> --task BE-01 --status RUNNING \
+node "$STATE" init --slug <slug> --dir .orchestrator/runs/<slug> --phase 1
+node "$STATE" sync --dir .orchestrator/runs/<slug>
+node "$STATE" phase --dir .orchestrator/runs/<slug> --phase 5 --status RUNNING
+node "$STATE" task --dir .orchestrator/runs/<slug> --task BE-01 --status RUNNING \
   --executor codex --session-id <id>
-node "$STATE" heartbeat --dir .orchestration/<slug> --task BE-01 \
+node "$STATE" heartbeat --dir .orchestrator/runs/<slug> --task BE-01 \
   --api-calls 7 --tool-calls 13 --current-tool Edit --in-tool true
-node "$STATE" gate --dir .orchestration/<slug> --gate backendReview \
+node "$STATE" gate --dir .orchestrator/runs/<slug> --gate backendReview \
   --status DONE --evidence file:review/review-final.md
-node "$STATE" audit --dir .orchestration/<slug>
-node "$STATE" verify --dir .orchestration/<slug>
-node "$STATE" run --dir .orchestration/<slug> --status DONE
+node "$STATE" audit --dir .orchestrator/runs/<slug>
+node "$STATE" verify --dir .orchestrator/runs/<slug>
+node "$STATE" run --dir .orchestrator/runs/<slug> --status DONE
 ```
 
 Outros comandos: `scope`, `lease`, `workspace`, `sweep`, `reconcile`, `resume`, `cancel`, `status`.
@@ -247,15 +256,17 @@ Defaults:
 - grace period: `120s`;
 - lease: `900s`, renovada somente com atividade observável.
 
-Use o lifecycle manager para polling contínuo e controle real quando houver adapter:
+Iniciar `watch` em segundo plano é **obrigatório** assim que uma wave é despachada (ver Fase 5 em `workflow.md`) — `--adapter-config` é opcional e só melhora o sinal, não é o que torna o watch obrigatório:
 
 ```bash
 node "${CLAUDE_SKILL_DIR}/scripts/orchestration-lifecycle.mjs" watch \
-  --dir .orchestration/<slug> --adapter-config .orchestrator/executor-control.json \
+  --dir .orchestrator/runs/<slug> --adapter-config .orchestrator/executor-control.json \
   --interval-seconds 30
 ```
 
-Sem adapter estável, o orquestrador executa a ação pela integração instalada, persiste seu retorno e usa `--external-confirmed`; nunca marca interrupt/dispatch apenas por intenção.
+Cada tick imprime uma linha NDJSON `{"type":"tick",...}` no stdout imediatamente (inspecionável com o processo já rodando, não só ao final). Por padrão o loop para sozinho (`stoppedReason`) quando não sobra nenhuma task `RUNNING`/`STALLED`/`UNKNOWN` (`NO_ACTIVE_TASKS`) ou quando a run chega a um status terminal (`RUN_TERMINAL`); `--auto-stop=false` desliga isso. `updateCompletionGate --gate monitoring --status DONE` recusa fechar (`GATE_MONITORING_REQUIRES_SWEEP`) enquanto `lifecycle.lastSweepAt` estiver vazio — prova de que `tick`/`watch`/`sweep` rodou ao menos uma vez.
+
+Sem adapter estável, o orquestrador executa a ação pela integração instalada, persiste seu retorno e usa `--external-confirmed`; nunca marca interrupt/dispatch apenas por intenção. Sem adapter, note também que `tick`/`watch` já rebaixa qualquer task `RUNNING` sem confirmação externa para `UNKNOWN` a partir do primeiro tick (ver regra 23 do `SKILL.md`) — isso não é regressão do watch obrigatório, é o comportamento pré-existente de `reconcileRunAtDirectory`, e é justamente o sinal visível que faltou na run analisada.
 
 ## Cancelamento
 
@@ -268,7 +279,7 @@ Cancelamento é protocolo, não atribuição direta:
 
 ```bash
 node "${CLAUDE_SKILL_DIR}/scripts/orchestration-lifecycle.mjs" cancel \
-  --dir .orchestration/<slug> --reason "pedido do usuário" \
+  --dir .orchestrator/runs/<slug> --reason "pedido do usuário" \
   --adapter-config .orchestrator/executor-control.json --finalize
 ```
 

@@ -115,7 +115,7 @@ test("lifecycle polls a real control adapter, persists the result first and rene
   assert.equal(existsSync(tick.controlResults[0].persisted.path), true);
   assert.equal(tick.heartbeats[0].lease.status, "ACTIVE");
   assert.equal(loadRun(artifactDir).state.tasks["BE-01"].status, "RUNNING");
-  assert.ok(readTelemetry(root).length >= 1);
+  assert.equal(readTelemetry(root).length, 0, "RUNNING is not a terminal telemetry outcome");
 });
 
 test("watchLifecycle ticks up to maxTicks and reports one onTick record per tick", async () => {
@@ -145,7 +145,7 @@ test("watchLifecycle ticks up to maxTicks and reports one onTick record per tick
   // continua rodando porque UNKNOWN esta em ACTIVE_TASK_STATUSES.
   for (const tick of ticks) {
     assert.equal(typeof tick.ranAt, "string");
-    assert.equal(tick.summary.counts.UNKNOWN, 1);
+    assert.equal(tick.summary.counts.RUNNING, 1);
   }
 });
 

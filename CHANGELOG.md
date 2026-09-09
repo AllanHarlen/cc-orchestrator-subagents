@@ -1,5 +1,14 @@
 # Changelog
 
+## [4.10.0] — 2026-09-09
+
+- Parser de tasks agora aceita apenas registros estruturais (heading, campo `Task`/`ID` ou primeira célula de tabela); referências `US-*`, `RF-*` e `CT-*` em prosa não criam tasks fantasmas.
+- Metadados de task são lidos apenas do valor do campo e `contractIds` aceita somente IDs `CT-*` válidos.
+- Adicionado gate de evidência semântica para planos que declaram `requirementIds`, com `requirements-evidence.json` e recomendação explícita `PARTIAL` no audit quando a execução não é comprovável.
+- Telemetria projeta somente outcomes terminais e usa IDs estáveis, eliminando duplicação causada por reconciliações que alteram `updatedAt`.
+- Reconciliação sem adapter preserva `RUNNING` como estado não verificado; o sweeper continua responsável por transicionar tarefas realmente inativas para `STALLED`.
+- Estado público de run passa a aceitar `PARTIAL` como resultado terminal auditável.
+
 ## [4.9.2] — 2026-09-07
 
 ### Relay automático para falha TLS no restore do Codex

@@ -334,6 +334,7 @@ export function projectRunTelemetry(projectRoot, artifactDir) {
   for (const task of Object.values(state.tasks ?? {})) {
     for (const attempt of task.attemptHistory ?? []) {
       const attemptResult = attempt.status ?? "UNKNOWN";
+      if (!["DONE", "FAILED", "BLOCKED", "CANCELLED"].includes(attemptResult)) continue;
       const attemptEventId = `tel-attempt-${sha(`${state.runId}\0${task.id}\0${attempt.attempt}\0${attemptResult}\0${attempt.completedAt ?? attempt.startedAt}`).slice(0, 24)}`;
       projected.push(recordTelemetry(projectRoot, {
         eventId: attemptEventId,
@@ -368,12 +369,19 @@ export function projectRunTelemetry(projectRoot, artifactDir) {
       }, existingIds));
     }
     const result = task.status;
+    // Telemetry is an outcome ledger. Reconciliation updates are useful in
+    // events.jsonl, but emitting PENDING/RUNNING/UNKNOWN snapshots here makes
+    // every harmless sweep look like a new task result.
+    if (!["DONE", "FAILED", "BLOCKED", "CANCELLED"].includes(result)) continue;
     const reason = task.reasonCode ?? task.reconciliation?.reason ?? null;
-    const eventId = `tel-${sha(`${state.runId}\0${task.id}\0${task.attempt}\0${result}\0${task.updatedAt}`).slice(0, 24)}`;
+    const completedAt = task.completedAt ?? task.attemptHistory?.findLast?.((entry) =>
+      Number(entry.attempt) === Number(task.attempt),
+    )?.completedAt ?? null;
+    const eventId = `tel-${sha(`${state.runId}\0${task.id}\0${task.attempt}\0${result}\0${completedAt ?? "pending"}`).slice(0, 24)}`;
     projected.push(recordTelemetry(projectRoot, {
       eventId,
       eventType: "task_outcome",
-      occurredAt: task.completedAt ?? task.updatedAt,
+      occurredAt: completedAt ?? task.updatedAt,
       runId: state.runId,
       taskId: task.id,
       taskType: task.category ?? null,
@@ -382,8 +390,8 @@ export function projectRunTelemetry(projectRoot, artifactDir) {
       model: task.model ?? null,
       attempt: Number(task.attempt ?? 0),
       startedAt: task.startedAt ?? null,
-      completedAt: task.completedAt ?? null,
-      durationMs: durationMs(task.startedAt, task.completedAt),
+      completedAt,
+      durationMs: durationMs(task.startedAt, completedAt),
       result,
       reasonCode: task.reasonCode ?? null,
       errorFingerprint: reason ? sha(String(reason).toLowerCase().replace(/\d+/g, "#")) : null,

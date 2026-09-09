@@ -75,6 +75,7 @@ export const RUN_STATUSES = Object.freeze([
   "STALLED",
   "CANCELLED",
   "UNKNOWN",
+  "PARTIAL",
 ]);
 
 export const GATE_STATUSES = Object.freeze([
@@ -91,7 +92,7 @@ const PHASE_STATUS_SET = new Set(PHASE_STATUSES);
 const RUN_STATUS_SET = new Set(RUN_STATUSES);
 const GATE_STATUS_SET = new Set(GATE_STATUSES);
 const TERMINAL_TASK_STATUSES = new Set(["DONE", "CANCELLED"]);
-const TERMINAL_RUN_STATUSES = new Set(["DONE", "CANCELLED"]);
+const TERMINAL_RUN_STATUSES = new Set(["DONE", "CANCELLED", "PARTIAL"]);
 const ACTIVE_RUN_STATUSES = new Set([
   "PENDING",
   "RUNNING",
@@ -103,13 +104,14 @@ const ACTIVE_RUN_STATUSES = new Set([
 
 const RUN_TRANSITIONS = Object.freeze({
   PENDING: new Set(["RUNNING", "BLOCKED", "CANCELLED", "UNKNOWN"]),
-  RUNNING: new Set(["DONE", "FAILED", "BLOCKED", "STALLED", "CANCELLED", "UNKNOWN"]),
+  RUNNING: new Set(["DONE", "FAILED", "BLOCKED", "STALLED", "CANCELLED", "UNKNOWN", "PARTIAL"]),
   DONE: new Set(),
-  FAILED: new Set(["RUNNING", "BLOCKED", "CANCELLED", "UNKNOWN"]),
-  BLOCKED: new Set(["RUNNING", "FAILED", "CANCELLED", "UNKNOWN"]),
-  STALLED: new Set(["RUNNING", "FAILED", "BLOCKED", "CANCELLED", "UNKNOWN"]),
+  FAILED: new Set(["RUNNING", "BLOCKED", "CANCELLED", "UNKNOWN", "PARTIAL"]),
+  BLOCKED: new Set(["RUNNING", "FAILED", "CANCELLED", "UNKNOWN", "PARTIAL"]),
+  STALLED: new Set(["RUNNING", "FAILED", "BLOCKED", "CANCELLED", "UNKNOWN", "PARTIAL"]),
   CANCELLED: new Set(),
-  UNKNOWN: new Set(["RUNNING", "FAILED", "BLOCKED", "STALLED", "CANCELLED"]),
+  UNKNOWN: new Set(["RUNNING", "FAILED", "BLOCKED", "STALLED", "CANCELLED", "PARTIAL"]),
+  PARTIAL: new Set(),
 });
 
 export const COMPLETION_GATE_DEFINITIONS = Object.freeze({
@@ -128,6 +130,7 @@ export const COMPLETION_GATE_DEFINITIONS = Object.freeze({
   backendReview: { phase: 8, label: "Back-end review" },
   frontendReview: { phase: 9, label: "Front-end review" },
   browserE2E: { phase: 9.5, label: "Real-browser E2E", waivable: true },
+  requirementsCoverage: { phase: 10, label: "Requirements evidence" },
   reports: { phase: 10, label: "Reports" },
   handoff: { phase: 10, label: "Handoff" },
   delivery: { phase: 11, label: "Delivery" },
@@ -485,6 +488,9 @@ function validateCompletionGates(gates) {
   }
   for (const [gateId, definition] of Object.entries(COMPLETION_GATE_DEFINITIONS)) {
     const gate = gates[gateId];
+    // Legacy runs predate the semantic evidence gate. They remain readable;
+    // a new run receives this gate from synchronizeCompletionGates().
+    if (!gate && gateId === "requirementsCoverage") continue;
     if (!gate || !GATE_STATUS_SET.has(gate.status)) {
       throw new OrchestrationStateError(
         "INVALID_COMPLETION_GATE",
@@ -1080,31 +1086,34 @@ function extractTaskBlocks(content) {
     current = null;
   };
 
+  const headingTask = /^\s*#{1,6}\s+(?:task\s+)?([A-Z][A-Z0-9]*(?:-[A-Z0-9]+)*)\b/i;
+  const explicitTask = /^\s*(?:[-*]\s*)?(?:task|id)\s*[:#-]\s*([A-Z][A-Z0-9]*(?:-[A-Z0-9]+)*)\b/i;
+
   for (const line of lines) {
-    const ids = uniqueTaskIds(line);
-    if (ids.length === 0) {
+    // A task is a record, not an arbitrary mention in prose.  In particular,
+    // requirements (US/RF) and contracts (CT) frequently occur in task prose.
+    const tableCells = /^\s*\|/.test(line)
+      ? line.split("|").map((cell) => cell.trim()).filter(Boolean)
+      : null;
+    const candidate = tableCells?.[0]?.match(/^([A-Z][A-Z0-9]*(?:-[A-Z0-9]+)*)$/i)?.[1]
+      ?? line.match(headingTask)?.[1]
+      ?? line.match(explicitTask)?.[1]
+      ?? null;
+    const id = candidate?.toUpperCase();
+    if (!id || !/\d/.test(id) || RESERVED_TASK_ID_PREFIXES.has(id.split("-")[0])) {
       if (current) current.lines.push(line);
       continue;
     }
 
-    if (/^\s*\|/.test(line)) {
-      blocks.push({ id: ids[0], text: line });
+    if (tableCells) {
+      blocks.push({ id, text: line });
       continue;
     }
 
-    if (/^#{1,6}\s+/.test(line) || /\b(?:ID|Task)\b\s*[:#-]?/i.test(line)) {
-      pushCurrent();
-      current = { id: ids[0], lines: [line] };
-      continue;
-    }
-
-    if (current) current.lines.push(line);
+    pushCurrent();
+    current = { id, lines: [line] };
   }
   pushCurrent();
-
-  if (blocks.length === 0) {
-    return uniqueTaskIds(content).map((id) => ({ id, text: id }));
-  }
   return blocks;
 }
 
@@ -1336,8 +1345,10 @@ function parseExpectedFiles(text) {
 
 function parseBacktickValues(text, pattern) {
   const values = [];
-  for (const line of text.split(/\r?\n/).filter((entry) => pattern.test(entry))) {
-    for (const match of line.matchAll(/`([^`]+)`/g)) values.push(match[1].trim());
+  for (const line of text.split(/\r?\n/)) {
+    const field = line.match(/^\s*(?:[-*]\s*)?([^:=|]+)\s*[:=]\s*(.*)$/i);
+    if (!field || !pattern.test(field[1])) continue;
+    for (const match of field[2].matchAll(/`([^`]+)`/g)) values.push(match[1].trim());
   }
   return [...new Set(values.filter(Boolean))];
 }
@@ -1363,6 +1374,7 @@ function parseTaskPlanningMetadata(text) {
   const agyEffort = parseScalarField(text, ["agyEffort"]);
   const agyTimeout = parseScalarField(text, ["agyTimeout"]);
   const agyFormat = parseScalarField(text, ["agyFormat"]);
+  const requirementIdsRaw = parseScalarField(text, ["requirementIds", "requirement ids", "requisitos"]);
   return {
     complexity,
     contractRequired,
@@ -1378,7 +1390,10 @@ function parseTaskPlanningMetadata(text) {
       text,
       /(?:allowedPaths|allowed paths|caminhos permitidos|task scope|escopo da task)/i,
     ),
-    contractIds: parseBacktickValues(text, /(?:contractIds?|contratos?)/i),
+    requirementIds: (requirementIdsRaw?.match(/\b(?:RF|US)-\d+\b/gi) ?? [])
+      .map((value) => value.toUpperCase()),
+    contractIds: parseBacktickValues(text, /^(?:contractIds?|contratos?)$/i)
+      .filter((value) => /^CT-[A-Z0-9]+(?:-[A-Z0-9]+)*$/i.test(value)),
   };
 }
 
@@ -1448,6 +1463,7 @@ export function parseTaskArtifacts(artifactDir) {
           agyFormat: null,
           validationPlan: [],
           allowedPaths: [],
+          requirementIds: [],
           contractIds: [],
         };
       }
@@ -1548,6 +1564,9 @@ function completionGateRequirements(tasks) {
     // motivo (gate --gate browserE2E --status N/A --required false --reason ...), nunca
     // uma derivacao silenciosa por categoria de task.
     browserE2E: frontend,
+    // Semantic evidence is mandatory only for PRD-derived plans that declare
+    // requirementIds. Spec/legacy plans remain compatible and explicit.
+    requirementsCoverage: Object.values(tasks ?? {}).some((task) => (task.requirementIds ?? []).length > 0),
     reports: true,
     handoff: true,
     delivery: true,
@@ -2030,6 +2049,7 @@ const GATE_ARTIFACT_CANDIDATES = Object.freeze({
   backendReview: [["review-final.md"]],
   frontendReview: [["review-frontend.md"]],
   browserE2E: [["browser-e2e-report.md"], ["e2e-report.md"], ["e2e-verification.md"]],
+  requirementsCoverage: [["requirements-evidence.json"]],
   reports: [["workflow-log.md", "subagents-context.md", "implementation-report.md"]],
   handoff: [["handoff.json"]],
   delivery: [],
@@ -2824,7 +2844,13 @@ function reconcileTask(task, probe, projectRoot, git, now) {
       ? "CANCEL_OR_RETRY_AFTER_RECONCILIATION"
       : "INTERRUPT_THEN_RECONCILE";
     reason = "No new progress was observed for a previously stalled task";
-  } else if (next.status === "UNKNOWN" || next.status === "RUNNING") {
+  } else if (next.status === "RUNNING") {
+    // A missing probe is an absence of observation, not evidence that an
+    // executor vanished.  The lifecycle sweeper owns the later RUNNING ->
+    // STALLED transition when the heartbeat actually becomes stale.
+    recommendation = "MONITOR_UNVERIFIED";
+    reason = "No authoritative executor outcome was observed; preserving the last RUNNING state";
+  } else if (next.status === "UNKNOWN") {
     next.status = "UNKNOWN";
     if (changedFiles.length > 0 || files.some((entry) => entry.exists)) {
       recommendation = "VERIFY_BEFORE_REEXECUTE";
@@ -2927,7 +2953,8 @@ function reconcileLocked(artifactDir, state, options = {}) {
         reason: reconciled.reason,
       });
     }
-    if (tasks[taskId].status === "UNKNOWN") {
+    if (["UNKNOWN", "RUNNING"].includes(tasks[taskId].status) &&
+        tasks[taskId].reconciliation?.externalStatus == null) {
       pendingExternalProbes.push({
         taskId,
         // Req 10.5: a consulta de status usa o Executor registrado no dispatch,
@@ -3532,6 +3559,31 @@ export function auditRunCompletion(artifactDir) {
   return completionAudit(artifactDir, state);
 }
 
+function requirementsEvidenceAudit(artifactDir, state) {
+  const gate = state.completionGates?.requirementsCoverage;
+  // A missing gate identifies a run created before 4.10.0. It is not silently
+  // promoted to DONE: callers receive PARTIAL as the recommended disposition.
+  if (!gate) return { applicable: false, legacy: true, valid: true, reason: "REQUIREMENTS_EVIDENCE_GATE_MISSING" };
+  if (!gate.required) return { applicable: false, legacy: false, valid: true, reason: "REQUIREMENTS_EVIDENCE_NOT_APPLICABLE" };
+  const resolved = resolveArtifact(artifactDir, "requirements-evidence.json");
+  if (!resolved) return { applicable: true, legacy: false, valid: false, reason: "REQUIREMENTS_EVIDENCE_MISSING" };
+  try {
+    const payload = JSON.parse(readFileSync(resolved.path, "utf8"));
+    const entries = Array.isArray(payload?.requirements) ? payload.requirements : [];
+    const invalid = entries.filter((entry) =>
+      !entry?.requirementId ||
+      !Array.isArray(entry.acceptanceCriteria) || entry.acceptanceCriteria.length === 0 ||
+      entry.acceptanceCriteria.some((criterion) =>
+        criterion?.status !== "PASS" || !Array.isArray(criterion.evidence) || criterion.evidence.length === 0,
+      ) ||
+      (Array.isArray(entry.findings) && entry.findings.some((finding) => finding?.status !== "RESOLVED")),
+    );
+    return { applicable: true, legacy: false, valid: entries.length > 0 && invalid.length === 0, invalidRequirementIds: invalid.map((entry) => entry.requirementId) };
+  } catch {
+    return { applicable: true, legacy: false, valid: false, reason: "REQUIREMENTS_EVIDENCE_INVALID_JSON" };
+  }
+}
+
 function completionAudit(artifactDir, state) {
   const tasks = Object.values(state.tasks ?? {});
   const unresolvedScope = tasks.filter(
@@ -3599,6 +3651,19 @@ function completionAudit(artifactDir, state) {
   const phaseComplete = Number(state.lastSafePhase) >= 12 &&
     Number(state.phase) === 12 &&
     state.phaseStatus === "DONE";
+  const requirementsEvidence = requirementsEvidenceAudit(artifactDir, state);
+  const complete =
+    tasks.length > 0 &&
+    phaseComplete &&
+    incompleteTasks.length === 0 &&
+    tasksWithoutEvidencePlan.length === 0 &&
+    unresolvedScope.length === 0 &&
+    incompleteGates.length === 0 &&
+    gatesWithoutEvidence.length === 0 &&
+    waivedGates.length === 0 &&
+    invalidDelegations.length === 0 &&
+    missingArtifacts.length === 0 &&
+    requirementsEvidence.valid;
   return {
     taskCount: tasks.length,
     phaseComplete,
@@ -3621,17 +3686,9 @@ function completionAudit(artifactDir, state) {
       code: "DELEGATION_WITHOUT_NEXT_STAGE",
     })),
     missingArtifacts,
-    complete:
-      tasks.length > 0 &&
-      phaseComplete &&
-      incompleteTasks.length === 0 &&
-      tasksWithoutEvidencePlan.length === 0 &&
-      unresolvedScope.length === 0 &&
-      incompleteGates.length === 0 &&
-      gatesWithoutEvidence.length === 0 &&
-      waivedGates.length === 0 &&
-      invalidDelegations.length === 0 &&
-      missingArtifacts.length === 0,
+    requirementsEvidence,
+    recommendedRunStatus: complete ? "DONE" : "PARTIAL",
+    complete,
   };
 }
 

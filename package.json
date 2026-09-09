@@ -1,6 +1,6 @@
 {
   "name": "cc-orchestrador-subagents",
-  "version": "4.9.2",
+  "version": "4.10.0",
   "private": true,
   "type": "module",
   "description": "Infraestrutura de testes do plugin cc-orchestrador-subagents. Sem dependencia de runtime: o codigo de producao usa apenas builtins do Node.",

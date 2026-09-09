@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "requirements": [
+    {
+      "requirementId": "RF-01",
+      "acceptanceCriteria": [
+        {
+          "id": "CA-01",
+          "status": "PASS",
+          "evidence": [
+            { "kind": "code", "ref": "apps/api/Controllers/Example.cs:42" },
+            { "kind": "browser", "ref": "review/e2e-verification.md#rf-01" }
+          ]
+        }
+      ],
+      "findings": []
+    }
+  ]
+}

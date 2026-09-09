@@ -21,6 +21,7 @@ import {
   heartbeatTask,
   initRun,
   loadRun,
+  parseTaskArtifacts,
   requestRunCancellation,
   reconcileRunAtDirectory,
   resolveTaskScope,
@@ -917,4 +918,23 @@ test("estado AGY persiste parametros de planejamento e metadados estruturados po
   assert.equal(retried.resolvedModel, null);
   assert.equal(retried.usage, null);
   assert.equal(retried.attemptHistory[0].resolvedModel, "gemini-4.2-flash-high");
+});
+
+test("task parsing ignores prose requirements and accepts only structural task records", () => {
+  const root = mkdtempSync(join(process.cwd(), ".tmp-parser-regression-"));
+  temporaryRoots.push(root);
+  writeFileSync(join(root, "tasks-classification.md"), [
+    "# Plano",
+    "A task deve atender `US-01` e o contrato `CT-01-auth`.",
+    "## BE-01 Entrega real",
+    "- requirementIds: US-01, RF-01",
+    "- contractIds: `CT-01-auth`, `openapi.yaml`, `FE-01`",
+    "## Task FE-01 Tela real",
+    "- validationPlan: `npm run build`",
+  ].join("\n"), "utf8");
+  writeFileSync(join(root, "waves.md"), "# Wave 1\n- BE-01\n- FE-01\n", "utf8");
+  const parsed = parseTaskArtifacts(root);
+  assert.deepEqual(Object.keys(parsed.tasks).sort(), ["BE-01", "FE-01"]);
+  assert.deepEqual(parsed.tasks["BE-01"].requirementIds, ["US-01", "RF-01"]);
+  assert.deepEqual(parsed.tasks["BE-01"].contractIds, ["CT-01-auth"]);
 });

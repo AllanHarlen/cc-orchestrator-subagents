@@ -472,7 +472,7 @@ export function cancelRunLifecycle(artifactDir, options = {}) {
 // (or the run itself reached a terminal status), further ticks would just
 // reconfirm nothing changed — stop instead of running unattended forever.
 const ACTIVE_TASK_STATUSES = new Set(["RUNNING", "STALLED", "UNKNOWN"]);
-const TERMINAL_RUN_STATUSES = new Set(["DONE", "CANCELLED"]);
+const TERMINAL_RUN_STATUSES = new Set(["DONE", "CANCELLED", "PARTIAL"]);
 
 function watchStopReason(summary) {
   if (!summary) return null;
@@ -490,6 +490,10 @@ export async function watchLifecycle(artifactDir, options = {}) {
   const results = [];
   let stoppedReason = null;
   for (let index = 0; index < maxTicks; index += 1) {
+    if (autoStop && TERMINAL_RUN_STATUSES.has(loadRun(artifactDir).state.status)) {
+      stoppedReason = "RUN_TERMINAL";
+      break;
+    }
     const result = tickLifecycle(artifactDir, options);
     results.push(result);
     if (typeof options.onTick === "function") {

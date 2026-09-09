@@ -109,6 +109,7 @@ test("gate and audit artifact resolution follows the layout that actually holds 
 
 test("layout mapping and detection are explicit about which version they describe", () => {
   assert.equal(artifactRelativePath("review-final.md", 2), "review/review-final.md");
+  assert.equal(artifactRelativePath("requirements-evidence.json", 2), "review/requirements-evidence.json");
   assert.equal(artifactRelativePath("review-final.md", 1), "review-final.md");
   assert.equal(artifactRelativePath("state.json", 2), "state.json");
   assert.equal(artifactRelativePath("events.jsonl", 2), "events.jsonl");

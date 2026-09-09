@@ -164,7 +164,7 @@ function help() {
       cancel: "cancel --dir <dir> --reason <text> [--finalize]",
       lease: "lease --dir <dir> --task <id> --action ACQUIRE|RENEW|RELEASE --owner-id <id> [--ttl-seconds 900]",
       workspace: "workspace --dir <dir> --task <id> --workspace-id <id> --status <status> [--path/--branch/--base-commit/--head-commit]",
-      run: "run --dir <dir> --status RUNNING|DONE|FAILED|BLOCKED|STALLED|CANCELLED|UNKNOWN",
+      run: "run --dir <dir> --status PENDING|RUNNING|DONE|FAILED|BLOCKED|STALLED|CANCELLED|UNKNOWN|PARTIAL",
       audit: "audit --dir <dir>",
       status: "status [runId] [--root <project>]",
       verify: "verify --dir <dir>",

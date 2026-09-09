@@ -1,5 +1,11 @@
 # Changelog
 
+## [4.10.1] — 2026-09-09
+
+- Corrigido o caminho de `review/requirements-evidence.json` no layout v2 e o gate agora valida a cobertura de todos os `requirementIds`, critérios com evidência estruturada e findings resolvidos.
+- `PARTIAL` passou a ser terminal de forma consistente no state engine, lifecycle watcher, schema público, CLI e documentação.
+- Parser de tasks volta a exigir IDs canônicos e preserva todos os `requirementIds` declarados em listas multilinha.
+
 ## [4.10.0] — 2026-09-09
 
 - Parser de tasks agora aceita apenas registros estruturais (heading, campo `Task`/`ID` ou primeira célula de tabela); referências `US-*`, `RF-*` e `CT-*` em prosa não criam tasks fantasmas.

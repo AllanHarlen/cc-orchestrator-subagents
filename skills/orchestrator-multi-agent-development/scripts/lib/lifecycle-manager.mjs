@@ -60,6 +60,8 @@ function controlContext(task, projectRoot, artifactDir, extra = {}) {
     taskId: task.id,
     executor: task.executor,
     sessionId: task.sessionId,
+    jobId: task.jobId ?? null,
+    threadId: task.threadId ?? null,
     conversationId: task.conversationId,
     retryDirective: task.retryDirective,
     attempt: task.attempt,
@@ -71,6 +73,9 @@ function controlContext(task, projectRoot, artifactDir, extra = {}) {
 
 function controlledProbes(artifactDir, projectRoot, options) {
   const config = readExecutorControlConfig(options.adapterConfig);
+  // A ausencia de configuracao e observavel: nao devemos fingir que um
+  // processo desconhecido ainda esta vivo. A reconciliacao o manterá UNKNOWN
+  // e pedirá uma probe explícita, em vez de deixar RUNNING eterno.
   if (!config) return { tasks: {}, results: [] };
   const state = loadRun(artifactDir).state;
   const tasks = {};
@@ -438,9 +443,9 @@ export function cancelRunLifecycle(artifactDir, options = {}) {
     }
   }
   let reconciliation = null;
-  if (options.adapterConfig || options.probeFile || options.codexFile || options.agyFile) {
-    reconciliation = tickLifecycle(directory, { ...options, projectRoot, resume: false });
-  }
+  // Sempre persiste ao menos uma reconciliacao de cancelamento/reinicio. Isto
+  // torna a retomada idempotente mesmo quando o watcher anterior morreu.
+  reconciliation = tickLifecycle(directory, { ...options, projectRoot, resume: false });
   const after = loadRun(directory).state;
   const nonTerminal = Object.values(after.tasks ?? {}).filter((task) =>
     !["DONE", "FAILED", "BLOCKED", "CANCELLED"].includes(task.status),

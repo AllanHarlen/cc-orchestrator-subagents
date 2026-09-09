@@ -563,6 +563,12 @@
             "null"
           ]
         },
+        "jobId": {
+          "type": ["string", "null"]
+        },
+        "threadId": {
+          "type": ["string", "null"]
+        },
         "conversationId": {
           "type": [
             "string",

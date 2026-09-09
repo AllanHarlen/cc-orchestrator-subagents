@@ -1506,6 +1506,8 @@ function initialTask(metadata, now) {
     attempt: 0,
     attemptHistory: [],
     sessionId: null,
+    jobId: null,
+    threadId: null,
     conversationId: null,
     resolvedModel: null,
     // Effort de Codex efetivamente usado (Achado 13), distinto do `agyEffort`
@@ -2259,6 +2261,8 @@ function mergeTaskFields(previous, status, options, now, git) {
   if (options.complexity !== undefined) task.complexity = options.complexity || null;
   if (options.sessionId !== undefined) task.sessionId = options.sessionId || null;
   if (options.conversationId !== undefined) task.conversationId = options.conversationId || null;
+  if (options.jobId !== undefined) task.jobId = options.jobId || null;
+  if (options.threadId !== undefined) task.threadId = options.threadId || null;
   if (options.resolvedModel !== undefined) task.resolvedModel = options.resolvedModel || null;
   if (options.codexEffort !== undefined) task.codexEffort = options.codexEffort || null;
   if (options.retryDirective !== undefined) task.retryDirective = options.retryDirective || null;
@@ -2304,11 +2308,13 @@ function mergeTaskFields(previous, status, options, now, git) {
         options.sessionId !== previous.sessionId;
       const conversationChanged = options.conversationId !== undefined && previous.conversationId != null &&
         options.conversationId !== previous.conversationId;
-      if (executorChanged || sessionChanged || conversationChanged) {
+      const jobChanged = options.jobId !== undefined && previous.jobId != null && options.jobId !== previous.jobId;
+      const threadChanged = options.threadId !== undefined && previous.threadId != null && options.threadId !== previous.threadId;
+      if (executorChanged || sessionChanged || conversationChanged || jobChanged || threadChanged) {
         throw new OrchestrationStateError(
           "ATTEMPT_NOT_DECLARED",
           `Task ${task.id} received a RUNNING update with a different ${
-            executorChanged ? "executor" : sessionChanged ? "sessionId" : "conversationId"
+            executorChanged ? "executor" : sessionChanged ? "sessionId" : conversationChanged ? "conversationId" : jobChanged ? "jobId" : "threadId"
           } than the current attempt, without --new-attempt`,
           {
             taskId: task.id,
@@ -2366,6 +2372,8 @@ function mergeTaskFields(previous, status, options, now, git) {
       reviewResult: null,
       regressions: 0,
       sessionId: task.sessionId ?? null,
+      jobId: task.jobId ?? null,
+      threadId: task.threadId ?? null,
       conversationId: task.conversationId ?? null,
       resolvedModel: task.resolvedModel ?? null,
       codexEffort: task.codexEffort ?? null,
@@ -2746,6 +2754,9 @@ function reconcileTask(task, probe, projectRoot, git, now) {
   const next = clone(task);
   const previousStatus = next.status;
   if (TERMINAL_TASK_STATUSES.has(next.status)) return next;
+  if (probe?.sessionId) next.sessionId = probe.sessionId;
+  if (probe?.jobId) next.jobId = probe.jobId;
+  if (probe?.threadId) next.threadId = probe.threadId;
   if (probe?.conversationId) next.conversationId = probe.conversationId;
   if (probe?.model) next.resolvedModel = probe.model;
   if (probe?.retryDirective) next.retryDirective = probe.retryDirective;
@@ -2962,6 +2973,8 @@ function reconcileLocked(artifactDir, state, options = {}) {
         executor: tasks[taskId].executor,
         executorSource: tasks[taskId].executorSource ?? null,
         sessionId: tasks[taskId].sessionId,
+        jobId: tasks[taskId].jobId ?? null,
+        threadId: tasks[taskId].threadId ?? null,
         conversationId: tasks[taskId].conversationId,
         required: true,
       });

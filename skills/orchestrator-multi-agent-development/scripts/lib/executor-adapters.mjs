@@ -200,8 +200,15 @@ export function adaptExecutorProbe(executor, rawInput, options = {}) {
     "TIMEOUT",
     "NEEDS_SYNC",
   ].includes(status) ? status : firstValue(raw, ["reasonCode", "reason_code"]);
-  const sessionId = normalizedExecutor === "codex"
-    ? firstValue(raw, ["sessionId", "session_id", "jobId", "job_id", "taskId", "task_id"])
+  // A sessao Claude que disparou um trabalho, o job local do companion e a
+  // thread Codex sao identidades diferentes.  Tratar todas como `sessionId`
+  // impedia uma retomada precisa depois de reiniciar o processo pai.
+  const sessionId = firstValue(raw, ["sessionId", "session_id"]);
+  const jobId = normalizedExecutor === "codex"
+    ? firstValue(raw, ["jobId", "job_id", "taskId", "task_id"])
+    : null;
+  const threadId = normalizedExecutor === "codex"
+    ? firstValue(raw, ["threadId", "thread_id", "codexThreadId", "codex_thread_id"])
     : null;
   const conversationId = normalizedExecutor === "agy"
     ? firstValue(raw, ["conversationId", "conversation_id", "sessionId", "session_id"]) ?? stream.conversationId
@@ -217,6 +224,8 @@ export function adaptExecutorProbe(executor, rawInput, options = {}) {
     reason: bounded(firstValue(raw, ["reason", "message", "summary"]) ?? stream.reason ?? text),
     error: bounded(firstValue(raw, ["error", "stderr"]) ?? stream.error),
     sessionId,
+    jobId,
+    threadId,
     conversationId,
     model: firstValue(raw, ["model", "modelName", "model_name"]),
     retryDirective,

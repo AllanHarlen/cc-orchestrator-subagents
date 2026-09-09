@@ -390,6 +390,18 @@ test("AGY adapter preserves structured bridge 4.0 metadata and validates retry d
   assert.equal(unsafe.retryDirective, null);
 });
 
+test("Codex adapter keeps companion job and resumable thread distinct from the owner session", () => {
+  const probe = adaptExecutorProbe("codex", {
+    status: "RUNNING",
+    session_id: "claude-owner-session",
+    job_id: "companion-job-42",
+    thread_id: "codex-thread-42",
+  });
+  assert.equal(probe.sessionId, "claude-owner-session");
+  assert.equal(probe.jobId, "companion-job-42");
+  assert.equal(probe.threadId, "codex-thread-42");
+});
+
 test("AGY adapter turns stream-json events into observable heartbeat counters", () => {
   const probe = adaptExecutorProbe("agy", {
     events: [

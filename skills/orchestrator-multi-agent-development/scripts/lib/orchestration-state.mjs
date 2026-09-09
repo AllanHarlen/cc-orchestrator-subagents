@@ -1100,7 +1100,7 @@ function extractTaskBlocks(content) {
       ?? line.match(explicitTask)?.[1]
       ?? null;
     const id = candidate?.toUpperCase();
-    if (!id || !/\d/.test(id) || RESERVED_TASK_ID_PREFIXES.has(id.split("-")[0])) {
+    if (!id || !TASK_ID_EXACT_RE.test(id) || RESERVED_TASK_ID_PREFIXES.has(id.split("-")[0])) {
       if (current) current.lines.push(line);
       continue;
     }
@@ -1359,6 +1359,26 @@ function parseScalarField(text, names) {
   return match?.[1]?.replace(/[`*_]/g, "").trim() ?? null;
 }
 
+function parseRequirementIds(text) {
+  const values = [];
+  let collecting = false;
+  for (const line of text.split(/\r?\n/)) {
+    const field = line.match(/^\s*(?:[-*]\s*)?(?:requirementIds|requirement ids|requisitos)\s*[:=]\s*(.*)$/i);
+    if (field) {
+      collecting = true;
+      values.push(...(field[1].match(/\b(?:RF|US)-\d+\b/gi) ?? []));
+      continue;
+    }
+    if (!collecting) continue;
+    if (/^\s{2,}(?:[-*]\s*)?/.test(line)) {
+      values.push(...(line.match(/\b(?:RF|US)-\d+\b/gi) ?? []));
+      continue;
+    }
+    collecting = false;
+  }
+  return [...new Set(values.map((value) => value.toUpperCase()))];
+}
+
 function parseTaskPlanningMetadata(text) {
   const complexityRaw = parseScalarField(text, ["complexity", "complexidade"]);
   const complexity = complexityRaw
@@ -1374,7 +1394,6 @@ function parseTaskPlanningMetadata(text) {
   const agyEffort = parseScalarField(text, ["agyEffort"]);
   const agyTimeout = parseScalarField(text, ["agyTimeout"]);
   const agyFormat = parseScalarField(text, ["agyFormat"]);
-  const requirementIdsRaw = parseScalarField(text, ["requirementIds", "requirement ids", "requisitos"]);
   return {
     complexity,
     contractRequired,
@@ -1390,8 +1409,7 @@ function parseTaskPlanningMetadata(text) {
       text,
       /(?:allowedPaths|allowed paths|caminhos permitidos|task scope|escopo da task)/i,
     ),
-    requirementIds: (requirementIdsRaw?.match(/\b(?:RF|US)-\d+\b/gi) ?? [])
-      .map((value) => value.toUpperCase()),
+    requirementIds: parseRequirementIds(text),
     contractIds: parseBacktickValues(text, /^(?:contractIds?|contratos?)$/i)
       .filter((value) => /^CT-[A-Z0-9]+(?:-[A-Z0-9]+)*$/i.test(value)),
   };
@@ -3034,7 +3052,7 @@ export function reconcileRunAtDirectory(artifactDir, options = {}) {
 export function resumeRunAtDirectory(artifactDir, options = {}) {
   return withLock(artifactDir, () => {
     let state = loadRun(artifactDir, { repairSnapshot: true, verifyReplay: true }).state;
-    if (["DONE", "CANCELLED"].includes(state.status)) {
+    if (TERMINAL_RUN_STATUSES.has(state.status)) {
       throw new OrchestrationStateError(
         "RUN_TERMINAL",
         `Run ${state.runId} is already ${state.status} and cannot be resumed`,
@@ -3563,22 +3581,48 @@ function requirementsEvidenceAudit(artifactDir, state) {
   const gate = state.completionGates?.requirementsCoverage;
   // A missing gate identifies a run created before 4.10.0. It is not silently
   // promoted to DONE: callers receive PARTIAL as the recommended disposition.
-  if (!gate) return { applicable: false, legacy: true, valid: true, reason: "REQUIREMENTS_EVIDENCE_GATE_MISSING" };
+  if (!gate) return { applicable: false, legacy: true, valid: false, reason: "REQUIREMENTS_EVIDENCE_GATE_MISSING" };
   if (!gate.required) return { applicable: false, legacy: false, valid: true, reason: "REQUIREMENTS_EVIDENCE_NOT_APPLICABLE" };
   const resolved = resolveArtifact(artifactDir, "requirements-evidence.json");
   if (!resolved) return { applicable: true, legacy: false, valid: false, reason: "REQUIREMENTS_EVIDENCE_MISSING" };
   try {
     const payload = JSON.parse(readFileSync(resolved.path, "utf8"));
+    if (payload?.schemaVersion !== 1) {
+      return { applicable: true, legacy: false, valid: false, reason: "REQUIREMENTS_EVIDENCE_INVALID_SCHEMA" };
+    }
+    const expectedRequirementIds = [...new Set(
+      Object.values(state.tasks ?? {}).flatMap((task) => task.requirementIds ?? []),
+    )].sort();
     const entries = Array.isArray(payload?.requirements) ? payload.requirements : [];
-    const invalid = entries.filter((entry) =>
-      !entry?.requirementId ||
-      !Array.isArray(entry.acceptanceCriteria) || entry.acceptanceCriteria.length === 0 ||
-      entry.acceptanceCriteria.some((criterion) =>
-        criterion?.status !== "PASS" || !Array.isArray(criterion.evidence) || criterion.evidence.length === 0,
-      ) ||
-      (Array.isArray(entry.findings) && entry.findings.some((finding) => finding?.status !== "RESOLVED")),
-    );
-    return { applicable: true, legacy: false, valid: entries.length > 0 && invalid.length === 0, invalidRequirementIds: invalid.map((entry) => entry.requirementId) };
+    const seen = new Set();
+    const invalid = [];
+    for (const entry of entries) {
+      const requirementId = entry?.requirementId;
+      const duplicate = Boolean(requirementId && seen.has(requirementId));
+      if (requirementId && expectedRequirementIds.includes(requirementId)) seen.add(requirementId);
+      const hasInvalidCriterion = !Array.isArray(entry?.acceptanceCriteria) ||
+        entry.acceptanceCriteria.length === 0 || entry.acceptanceCriteria.some((criterion) =>
+          !criterion?.id || criterion.status !== "PASS" || !Array.isArray(criterion.evidence) ||
+          criterion.evidence.length === 0 || criterion.evidence.some((evidence) =>
+            !evidence || typeof evidence !== "object" || Array.isArray(evidence) ||
+            typeof evidence.kind !== "string" || evidence.kind.trim() === "" ||
+            typeof evidence.ref !== "string" || evidence.ref.trim() === "",
+          ),
+        );
+      const hasOpenFindings = !Array.isArray(entry?.findings) ||
+        entry.findings.some((finding) => finding?.status !== "RESOLVED");
+      if (!requirementId || !expectedRequirementIds.includes(requirementId) || duplicate || hasInvalidCriterion || hasOpenFindings) {
+        invalid.push(entry);
+      }
+    }
+    const missingRequirementIds = expectedRequirementIds.filter((requirementId) => !seen.has(requirementId));
+    return {
+      applicable: true,
+      legacy: false,
+      valid: entries.length > 0 && invalid.length === 0 && missingRequirementIds.length === 0,
+      invalidRequirementIds: invalid.map((entry) => entry.requirementId),
+      missingRequirementIds,
+    };
   } catch {
     return { applicable: true, legacy: false, valid: false, reason: "REQUIREMENTS_EVIDENCE_INVALID_JSON" };
   }

@@ -98,7 +98,7 @@ Com esse bloco estreito, a tabela de referência por caminho (o que efetivamente
 2. Resultado de executor é persistido antes de alterar estado ou responder ao usuário.
 3. Perda de ownership produz `UNKNOWN`; nunca presume `FAILED` ou `DONE`.
 4. `DONE` exige evidência local: arquivo esperado/produzido, validação passando, delta de commit ou evidence ID durável.
-5. Run terminal (`DONE`/`CANCELLED`) é imutável e seu `runId` não pode ser reutilizado.
+5. Run terminal (`DONE`/`CANCELLED`/`PARTIAL`) é imutável e seu `runId` não pode ser reutilizado.
 6. Task removida da classificação continua bloqueando o fechamento até `scope REMOVE|REINSTATE` explícito.
 7. A run não fecha pela agregação das tasks. `run DONE` exige tasks, Fase 12, artefatos e completion gates.
 8. Stall mede ausência de progresso, não duração total.
@@ -110,7 +110,7 @@ Esses invariantes adaptam os padrões de persist-before-delivery, ownership inde
 Tasks usam apenas:
 
 ```text
-PENDING RUNNING DONE FAILED BLOCKED STALLED CANCELLED UNKNOWN
+PENDING RUNNING DONE FAILED BLOCKED STALLED CANCELLED UNKNOWN PARTIAL
 ```
 
 Runs usam:

@@ -80,6 +80,7 @@ const LAYOUT_V2_FILE_DIRECTORIES = Object.freeze({
   "browser-e2e-report.md": "review",
   "e2e-report.md": "review",
   "e2e-verification.md": "review",
+  "requirements-evidence.json": "review",
   "implementation-report.md": "report",
   "workflow-log.md": "report",
   "subagents-context.md": "report",

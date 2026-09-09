@@ -926,8 +926,11 @@ test("task parsing ignores prose requirements and accepts only structural task r
   writeFileSync(join(root, "tasks-classification.md"), [
     "# Plano",
     "A task deve atender `US-01` e o contrato `CT-01-auth`.",
+    "## V2 migration notes",
+    "Esta secao nao e uma task.",
     "## BE-01 Entrega real",
     "- requirementIds: US-01, RF-01",
+    "  - RF-02",
     "- contractIds: `CT-01-auth`, `openapi.yaml`, `FE-01`",
     "## Task FE-01 Tela real",
     "- validationPlan: `npm run build`",
@@ -935,6 +938,60 @@ test("task parsing ignores prose requirements and accepts only structural task r
   writeFileSync(join(root, "waves.md"), "# Wave 1\n- BE-01\n- FE-01\n", "utf8");
   const parsed = parseTaskArtifacts(root);
   assert.deepEqual(Object.keys(parsed.tasks).sort(), ["BE-01", "FE-01"]);
-  assert.deepEqual(parsed.tasks["BE-01"].requirementIds, ["US-01", "RF-01"]);
+  assert.deepEqual(parsed.tasks["BE-01"].requirementIds, ["US-01", "RF-01", "RF-02"]);
   assert.deepEqual(parsed.tasks["BE-01"].contractIds, ["CT-01-auth"]);
+});
+
+test("requirements evidence uses the review layout and covers every task requirement", () => {
+  const { root, artifactDir } = fixture({ slug: "requirements-evidence" });
+  writeFileSync(join(artifactDir, "tasks-classification.md"), [
+    "# Tasks",
+    "",
+    "## BE-01 - Requirement implementation",
+    "- category: BACKEND_ONLY",
+    "- validationPlan: `verify`",
+    "- requirementIds: RF-99",
+  ].join("\n"), "utf8");
+  writeFileSync(join(artifactDir, "waves.md"), "# Waves\n\n## Wave 1\n- BE-01\n", "utf8");
+  initRun({ projectRoot: root, artifactDir, slug: "requirements-evidence", runId: "requirements-evidence-001" });
+
+  const evidencePath = join(artifactDir, "review", "requirements-evidence.json");
+  writeFileSync(evidencePath, JSON.stringify({
+    schemaVersion: 1,
+    requirements: [{
+      requirementId: "RF-01",
+      acceptanceCriteria: [{ id: "CA-01", status: "PASS", evidence: [null] }],
+      findings: [],
+    }],
+  }), "utf8");
+  let audit = auditRunCompletion(artifactDir).requirementsEvidence;
+  assert.equal(audit.valid, false);
+  assert.deepEqual(audit.missingRequirementIds, ["RF-99"]);
+
+  writeFileSync(evidencePath, JSON.stringify({
+    schemaVersion: 1,
+    requirements: [{
+      requirementId: "RF-99",
+      acceptanceCriteria: [{
+        id: "CA-99",
+        status: "PASS",
+        evidence: [{ kind: "code", ref: "src/example.mjs:42" }],
+      }],
+      findings: [],
+    }],
+  }), "utf8");
+  const gate = updateCompletionGate(artifactDir, "requirementsCoverage", "DONE", { projectRoot: root }).gate;
+  assert.ok(gate.evidence.includes("file:review/requirements-evidence.json"));
+  audit = auditRunCompletion(artifactDir).requirementsEvidence;
+  assert.equal(audit.valid, true);
+});
+
+test("PARTIAL runs are terminal and cannot be resumed", () => {
+  const { root, artifactDir } = fixture({ slug: "partial-terminal" });
+  initRun({ projectRoot: root, artifactDir, slug: "partial-terminal", runId: "partial-terminal-001" });
+  updateRunStatus(artifactDir, "PARTIAL", { projectRoot: root, reason: "Evidence is incomplete" });
+  assert.throws(
+    () => resumeRunAtDirectory(artifactDir, { projectRoot: root }),
+    (error) => error instanceof OrchestrationStateError && error.code === "RUN_TERMINAL",
+  );
 });

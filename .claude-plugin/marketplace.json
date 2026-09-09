@@ -14,7 +14,7 @@
         {
             "name": "cc-orchestrador-subagents",
             "description": "Orchestrator skill + /orchestrator command for PRD-driven Codex/Antigravity execution with verified project knowledge, crash-safe lifecycle, physical isolation, programmatic validation, telemetry, learning recipes and auditable delivery.",
-            "version": "4.10.0",
+            "version": "4.10.1",
             "author": {
                 "name": "allanharlen"
             },

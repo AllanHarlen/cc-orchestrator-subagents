@@ -31,6 +31,7 @@ import {
 import {
   initRun,
   loadRun,
+  updateRunStatus,
   updateTaskStatus,
 } from "../skills/orchestrator-multi-agent-development/scripts/lib/orchestration-state.mjs";
 import {
@@ -171,6 +172,17 @@ test("watchLifecycle stops early once no task is left active (NO_ACTIVE_TASKS)",
   assert.equal(result.ticks, 1);
   assert.equal(ticks.length, 1);
   assert.equal(loadRun(artifactDir).state.lifecycle.lastSweepAt != null, true);
+});
+
+test("watchLifecycle does not tick a terminal PARTIAL run", async () => {
+  const { root, artifactDir } = fixture();
+  updateRunStatus(artifactDir, "PARTIAL", { projectRoot: root, reason: "Missing review evidence" });
+  const result = await watchLifecycle(artifactDir, {
+    projectRoot: root,
+    maxTicks: 3,
+  });
+  assert.equal(result.stoppedReason, "RUN_TERMINAL");
+  assert.equal(result.ticks, 0);
 });
 
 test("watchLifecycle with autoStop: false ignores terminal state and always runs maxTicks", async () => {

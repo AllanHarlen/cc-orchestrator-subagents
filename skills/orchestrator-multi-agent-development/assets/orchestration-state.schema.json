@@ -141,6 +141,11 @@
         "delivery",
         "learning"
       ],
+      "properties": {
+        "requirementsCoverage": {
+          "$ref": "#/$defs/completionGate"
+        }
+      },
       "additionalProperties": {
         "$ref": "#/$defs/completionGate"
       }
@@ -295,12 +300,15 @@
     },
     "runStatus": {
       "enum": [
+        "PENDING",
         "RUNNING",
         "DONE",
         "FAILED",
         "BLOCKED",
+        "STALLED",
         "CANCELLED",
-        "UNKNOWN"
+        "UNKNOWN",
+        "PARTIAL"
       ]
     },
     "taskStatus": {

@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.14.0] — 2026-09-12
+
+- Diretrizes avançadas de Context7 MCP (Upstash Context7):
+  - `skills/orchestrator-multi-agent-development/references/mcp-context.md`: incorporação da regra de **Single-Concept Scoping** (evitando diluição de ranking semântico em buscas de documentação), formato canônico versionado `/org/project/version` a partir de `Versions`, pontuação oficial no nome da biblioteca (`Next.js`, `ASP.NET Core`), orçamento de até 3 consultas por tarefa e filtros de escopo negativos explícitos.
+  - `skills/orchestrator-multi-agent-development/references/subagent-prompts.md`: templates de prompt de subagentes back-end (Codex) e front-end (AGY) atualizados com as regras atômicas de consulta de documentação sob os placeholders `Context7 MCP:`.
+  - Checklist da referência de MCPs atualizado com os novos critérios.
+
 ## [4.13.0] — 2026-09-12
 
 - Novas ferramentas determinísticas de aceleração de execução:

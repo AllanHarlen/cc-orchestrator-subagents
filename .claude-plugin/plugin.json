@@ -1,6 +1,6 @@
 {
   "name": "cc-orchestrador-subagents",
-  "version": "4.12.0",
+  "version": "4.14.0",
   "description": "Persistent multi-agent engineering orchestrator for Claude Code with deterministic Pensador handoff ingestion, authoritative resolved-design materialization, semantic UI/E2E gates, per-attempt token and duration telemetry, durable state/resume, worktrees, reviews and curated learning.",
   "author": {
     "name": "allanharlen"

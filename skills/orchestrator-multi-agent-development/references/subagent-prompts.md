@@ -11,7 +11,7 @@ Sempre leia este arquivo antes de delegar para Codex ou Antigravity/AGY.
 - Se aparecer cota, rate limit, billing, resource exhausted, model capacity ou daily limit no AGY, preserve o status cru `Status: QUOTA_EXAUSTED`.
 - Nao tente contornar cota com retries longos ou mudanca arbitraria de modelo.
 - Antes de prometer Context7 ou Codebase Memory no prompt de uma task Codex/AGY, prefira `checks.optional.mcpPerAgent.<agent>.<servidor>.ok` (verdade ao vivo por agente, so existe quando o preflight rodou com `--check-agent-mcp`) em vez do agregado `checks.optional.mcp.<servidor>.ok` — esse agregado so prova que o MCP esta registrado em algum lugar da maquina, nao necessariamente na CLI que vai executar a task (ver `references/mcp-context.md`).
-- Se o sinal aplicavel indicar disponibilidade para Context7, use-o antes de decidir sobre bibliotecas, frameworks, SDKs, APIs, CLIs ou cloud services.
+- Se o sinal aplicavel indicar disponibilidade para Context7, use-o antes de decidir sobre bibliotecas, frameworks, SDKs, APIs, CLIs ou cloud services externos, aplicando Single-Concept Scoping (consulta focada em um unico conceito, sem misturar temas), versao canonica `/org/project/version` quando compativel com o projeto e limite de ate 3 consultas por tarefa. Nao use para logica de negocio interna ou refatoracao local.
 - Se o sinal aplicavel indicar disponibilidade para Codebase Memory, use `search_graph`/`trace_path`/`get_code_snippet` para localizar o simbolo, quem o chama e quem ele chama, antes de varrer arquivos com Read/Glob/Grep. Grafo e pista, nao prova: confirme por leitura do arquivo antes de alterar comportamento. Se o grafo nao cobrir o arquivo, ou a consulta falhar, leia o arquivo diretamente. Fique dentro do escopo permitido mesmo que o grafo aponte para fora dele.
 - Se existir contrato API/UI, siga o contrato como fonte da verdade.
 - Valide casing JSON e wire format real; nao assuma que nomes de DTO internos sao iguais ao payload na rede.
@@ -100,6 +100,12 @@ Skills relevantes:
 
 Context7 MCP:
 <MANTER SOMENTE SE DISPONIVEL>
+- consulte documentacao atual antes de escrever codigo que usa libs/frameworks/APIs externos;
+- use resolve-library-id com o nome oficial pontuado (ex: 'Next.js');
+- se houver versao compativel com o projeto em Versions, use o ID '/org/project/version';
+- faca query-docs com Single-Concept Scoping (consulta escopada a um unico conceito por vez);
+- limite maximo de 3 consultas por tarefa; nunca use para logica de negocio interna;
+- cite docs consultadas no retorno; senao siga padroes locais;
 
 Codebase Memory MCP:
 <MANTER SOMENTE SE DISPONIVEL>
@@ -241,6 +247,12 @@ Modelo dos subagentes:
 
 Context7 MCP:
 <MANTER SOMENTE SE DISPONIVEL>
+- consulte documentacao atual antes de escrever codigo que usa libs/frameworks/APIs externos;
+- use resolve-library-id com o nome oficial pontuado (ex: 'Next.js');
+- se houver versao compativel com o projeto em Versions, use o ID '/org/project/version';
+- faca query-docs com Single-Concept Scoping (consulta escopada a um unico conceito por vez);
+- limite maximo de 3 consultas por tarefa; nunca use para logica de negocio interna;
+- cite docs consultadas no retorno; senao siga padroes locais;
 
 Codebase Memory MCP:
 <MANTER SOMENTE SE DISPONIVEL>

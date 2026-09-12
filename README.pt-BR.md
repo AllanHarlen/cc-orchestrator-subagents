@@ -42,14 +42,14 @@ Esse check agregado só prova que o servidor está registrado *em algum lugar* d
 - **Fase 1 - Memória + especificação:** audita `.orchestrator/project-memory.md`, projeta o histórico FTS5 e lê o PRD/spec como fonte da verdade; ingere artefatos visuais do Pensador (`tokens.css`, `prototypes/`, `assets/`); somente fatos comprovados complementam o contexto.
 - **Fase 2 - Classificação das tasks:** gera categoria, dependências, complexidade, contrato, `expectedFiles`/`validationPlan`, `allowedPaths`, agente e features de routing.
 - **Fase 3 - Ondas, routing e isolamento:** aplica pisos heurísticos, consulta evidência histórica quando suficiente, valida roteamento e separa worktrees isoladas de tasks serializadas por overlap.
-- **Fase 4 - Contratos API/UI e materialização visual:** cria e valida deterministicamente contratos, wire format, casing, exemplos, estados e permissões para toda troca front-back, e materializa o pacote visual autoritativo (`design-materialization.json`).
+- **Fase 4 - Contratos API/UI e materialização visual:** cria e valida deterministicamente contratos, wire format, casing, exemplos, estados e permissões para toda troca front-back, materializa o pacote visual autoritativo (`design-materialization.json`) e gera contratos fortemente tipados via `generate-contract-types.mjs`.
 - **Fase 5 - Delegação paralela:** cria worktrees elegíveis, adquire leases e envia tasks conforme `plan/waves.md`; Codex e AGY recebem, cada um, o modelo explicável selecionado, com o AGY recebendo os protótipos de descoberta como spec visual imperativa.
 - **Fase 6 - Lifecycle Manager:** consulta adapters, persiste retornos antes de consumir, renova heartbeat/lease por atividade observável e trata stall/grace/interrupt/retry/cancel sem presumir resultado.
-- **Fase 7 - Integração:** integra worktrees serialmente e usa scripts determinísticos para diff, escopo, API/UI, wire format e resultados de validação antes dos ajustes por categoria.
+- **Fase 7 - Integração:** executa Early Stack Boot (`smoke-test-infra.mjs`) na Wave 1 para validação rápida de infra em 2 minutos, roda Wave Quality Gates (`run-wave-gate.mjs`) entre ondas sem tokens LLM, e integra worktrees serialmente usando scripts determinísticos para diff, escopo, API/UI, wire format e validação.
 - **Fase 8 - Review back-end pós-implementação:** delega review final read-only ao Codex com `--effort high`, **somente do back-end**, e salva `review/review-final.md`. Se Codex ficar sem quota, o próprio Orchestrador faz review interno. Ignorada se não houver back-end.
 - **Fase 9 - Review front-end pós-implementação:** delega review final read-only ao AGY com `--read-only --format json --model pro-high --effort high`, **somente do front-end**, validando critérios de aceite, conformidade com o design system e fidelidade aos protótipos visuais de `prototypes/`, e salva `review/review-frontend.md`. Se o AGY estiver indisponível, o Orchestrador faz review interno. **Ignorada se não houver task front-end.**
 - **Fase 9.5 - E2E no navegador:** obrigatória sempre que a run tem front-end. Dirige os fluxos críticos em navegador real e verifica CORS, resolução de tenant/host, casing de resposta, estado da UI e o efeito final visível ao usuário. Topologia de mesma origem dispensa o gate por waiver explícito, com motivo registrado — nunca por derivação silenciosa.
-- **Fase 10 - Relatórios finais:** cria `report/workflow-log.md`, `report/subagents-context.md` e `report/implementation-report.md`, consolidando timeline, contratos, validações, subagentes, Conversation IDs do AGY e status de entrega.
+- **Fase 10 - Relatórios finais:** cria `report/workflow-log.md`, `report/subagents-context.md` e `report/implementation-report.md`, gerando a matriz de rastreabilidade da Seção 13 deterministicamente via `build-traceability-matrix.mjs`, consolidando timeline, contratos, validações, subagentes, Conversation IDs do AGY e status de entrega.
 - **Fase 11 - Entrega durável:** prepara e persiste o resumo/instruções, sem anunciar sucesso antes dos gates finais.
 - **Fase 12 - Learning e fechamento:** cria `learning/learning-report.md` e candidate lessons sem promoção automática, projeta history/telemetry, exige `audit.complete`, fecha/verifica a run e só então publica a entrega.
 
@@ -66,11 +66,12 @@ Os artefatos de coordenação e relatórios finais ficam em `.orchestrator/runs/
 - **Isolamento físico:** scope sem overlap pode usar worktree por task; overlap ou scope desconhecido serializa a wave.
 - **Telemetria privacy-first:** somente metadados allowlisted são persistidos/exportados; prompt, conteúdo, diff, source, raw output e secrets são recusados.
 - **Learning controlado:** a Fase 12 cria candidatos; validação independente precede Recipe, e o Curator oferece pin/archive/backup/rollback sem auto-delete.
-- **Prompts Codex:** não fixam `--model`; usam apenas `--effort medium` para implementação/handoff/ajustes e `--effort high` para review back-end.
+- **Prompts & Esforço do Codex:** `--effort` é derivado da complexidade/risco da task (`low`/`medium` para CRUDs/tasks isoladas; `high` reservado para arquitetura central e reviews).
+- **Auto-verificação Local Obrigatória:** subagentes devem executar build/typecheck/testes locais em sua worktree/workspace (`<BUILD_CMD>` e `<TEST_CMD>`) com exit code 0 antes de retornar `Status: DONE`.
 - **Contratos obrigatórios:** qualquer troca front-back exige contrato antes de paralelizar.
 - **Wire format:** todo contrato precisa explicitar casing JSON, nomes de campos, exemplos completos e validação de serialização real.
 - **Roteamento por categoria:** `FRONTEND_ONLY` fica com Antigravity/AGY, inclusive setup front-end; Codex só assume front-end como fallback operacional registrado.
-- **Quota Codex:** falta de quota em implementação bloqueia e pede decisão do usuário; falta de quota em review back-end aciona review interno read-only do Orchestrador.
+- **Quota do Codex & Fallback de Back-End:** em caso de esgotamento de quota no Codex (`QUOTA_EXHAUSTED`), o fallback de implementação de back-end delega exclusivamente para o AGY com modelos Gemini (`gemini-3.8-flash-medium` para CRUDs/tarefas isoladas e `gemini-3.8-flash-high` para arquitetura/segurança), sendo estritamente proibido delegar para modelos Claude; falta de quota em review back-end aciona review interno read-only do Orchestrador.
 - **Sandbox Codex:** rede externa bloqueada para pacotes/restore, pacote ausente no cache local ou escrita fora do working directory permitido viram `BLOCKED` com evidência.
 - **Limite AGY no Windows:** prompts AGY acima de 28.000 chars são divididos em subtasks por entregáveis antes da delegação para evitar `ENAMETOOLONG`.
 
@@ -416,11 +417,11 @@ Se a task for monolítica e indivisível por entregáveis, o orquestrador tenta 
 
 Se houver `QUOTA_EXHAUSTED`:
 
-- marcar `BLOCKED`;
-- registrar evidência;
-- pedir decisão ao usuário.
-
-O orquestrador não continua editando código produtivo por conta própria.
+- delegar o fallback de implementação de back-end exclusivamente para o AGY (`cc-antigravity-plugin:antigravity-coder`) com modelos Gemini:
+  - `gemini-3.8-flash-medium` para tarefas pontuais/CRUDs, seeds e ajustes isolados;
+  - `gemini-3.8-flash-high` para arquitetura, segurança ou refatorações complexas;
+- proibir estritamente fallback para modelos Claude ou subagentes `claude-code`, preservando a cota da sessão principal;
+- registrar motivo do fallback e evidência em `run/monitoring.md` e `report/workflow-log.md`.
 
 ### Codex em review back-end
 

@@ -172,9 +172,9 @@ Nao tente contornar o sandbox com retries longos, troca arbitraria de ferramenta
   - ajuste timeout, escopo ou decomposicao da task antes de repetir.
 
 - `QUOTA_EXHAUSTED` no Codex em implementacao, ajuste pontual ou handoff:
-  - marque `BLOCKED`;
-  - registre evidencia;
-  - peca decisao do usuario.
+  - fallback de implementacao de back-end delega exclusivamente para o AGY (`cc-antigravity-plugin:antigravity-coder`) com modelos Gemini nativos (`gemini-3.8-flash-medium` para tarefas pontuais/CRUDs/seeds e `gemini-3.8-flash-high` para arquitetura/seguranca);
+  - NUNCA delegar para modelos Claude ou subagentes `claude-code`, preservando estritamente a cota da sessao principal;
+  - registre o motivo do fallback e os identificadores em `run/monitoring.md` e `report/workflow-log.md`.
 
 - `QUOTA_EXHAUSTED` no Codex em review back-end:
   - faca review interno read-only no orquestrador;

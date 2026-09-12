@@ -184,6 +184,7 @@ Contexto:
 - especificacao (PRD/spec): <COLAR TRECHO RELEVANTE OU CAMINHO DO ARQUIVO>
 - task atual: <TASK ID - TITULO>
 - pacote visual autoritativo: <CAMINHOS design-contract.json, tokens.css, DESIGN.md e assets/manifest.json>
+- prototipos de referencia (spec visual dos fluxos criticos): <CAMINHO prototypes/ (ex.: .pensador/<slug>-vN/prototypes/)>
 
 Descricao:
 <COLAR DESCRICAO DA TASK>
@@ -212,6 +213,7 @@ Design System (Open Design) — CONSUMIR, NAO REINVENTAR:
 - assets aprovados: <CAMINHO assets/manifest.json>; copie conforme `materializeInto`, aplique `seedBindings` e nao solicite/sugira/gere imagens
 Regras de design (do skills-protocol do Open Design — obrigatorias):
 - cole o `tokens.css` como base e use as custom properties (`var(--*)`); NAO invente hex/raio/espacamento fora dos tokens;
+- use os prototipos HTML em prototypes/ como SPEC VISUAL do fluxo: replique layout, hierarquia, comportamento e textos reais aprovados pelo usuario, sem inventar telas do zero;
 - implemente os componentes batendo com os seletores/estados de `components.html` (default/hover/focus/active/disabled/loading/empty/error);
 - accent contido: no maximo 2x por pagina (hero + CTA) alem de links; nao floode;
 - sem sombra se Depth & Elevation = minimal; nada de emoji como icone;
@@ -381,6 +383,7 @@ Revise a implementacao front-end realizada pelos subagentes para a especificacao
 
 Leia:
 - a especificacao (PRD/spec) ingerida
+- prototipos de referencia em prototypes/ (quando disponiveis no handoff)
 - .orchestrator/runs/<nome>/plan/tasks-classification.md
 - .orchestrator/runs/<nome>/contracts/
 - .orchestrator/runs/<nome>/report/implementation-report.md secao 13 (matriz de rastreabilidade RF/CA -> evidencia)
@@ -388,6 +391,7 @@ Leia:
 
 Verifique:
 - aderencia a especificacao no escopo front-end;
+- fidelidade visual contra os prototipos em prototypes/: a tela implementada deve espelhar o layout e hierarquia aprovados no discovery;
 - **cada criterio de aceite (`CA`) das tasks front-end validado por inspecao direta do codigo/comportamento** — nao delegue essa validacao a uma suite de testes; confirme o requisito olhando a implementacao real; confira a matriz de rastreabilidade contra a tela/componente real, nao apenas contra o texto do relatorio;
 - **`// TODO`, placeholder de conteudo fixo (copy generico onde o requisito pede dado real) ou estado vazio nao implementado no caminho de um `RF`/`CA` do escopo e achado CRITICO/bloqueante**, mesmo que o build/typecheck/lint passem;
 - consumo correto do contrato API/UI: wire format, casing JSON e serializacao real contra o TypeScript consumidor;

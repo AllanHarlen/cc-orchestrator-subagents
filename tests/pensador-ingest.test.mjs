@@ -15,6 +15,7 @@ import test from "node:test";
 
 import {
   ingestPensadorHandoff,
+  inspectVisualHandoff,
   listPensadorHandoffs,
 } from "../skills/orchestrator-multi-agent-development/scripts/lib/pensador-ingest.mjs";
 import { initRun } from "../skills/orchestrator-multi-agent-development/scripts/lib/orchestration-state.mjs";
@@ -275,3 +276,44 @@ test("listPensadorHandoffs never touches .pensador/ (read-only)", () => {
   const after = readFileSync(handoffPath, "utf8");
   assert.equal(before, after);
 });
+
+test("inspectVisualHandoff and ingestPensadorHandoff collect and expose ui-prototype and brand-assets", () => {
+  const root = fixture();
+  const handoffDir = join(root, ".pensador/app-v1");
+  mkdirSync(join(handoffDir, "prototypes"), { recursive: true });
+  writeFileSync(join(handoffDir, "prototypes/index.html"), "<html>Prototype</html>", "utf8");
+  mkdirSync(join(handoffDir, "assets"), { recursive: true });
+  writeFileSync(join(handoffDir, "assets/manifest.json"), JSON.stringify({ assets: [] }), "utf8");
+
+  const handoff = {
+    ...baseHandoff("app"),
+    artifacts: [
+      { role: "ui-prototype", path: "prototypes/", required: false, description: "Protótipos HTML estáticos dos fluxos críticos" },
+      { role: "brand-assets", path: "assets/", required: false, manifest: "assets/manifest.json", description: "Diretório de mídia e brand assets" },
+    ],
+  };
+  const handoffPath = join(handoffDir, "handoff.json");
+  writeJson(handoffPath, handoff);
+
+  const visual = inspectVisualHandoff(handoff, handoffPath);
+  assert.equal(visual.prototypes.length, 1);
+  assert.equal(visual.prototypes[0].path, "prototypes/");
+  assert.equal(visual.prototypes[0].exists, true);
+  assert.equal(visual.prototypes[0].description, "Protótipos HTML estáticos dos fluxos críticos");
+  assert.equal(visual.brandAssets.length, 1);
+  assert.equal(visual.brandAssets[0].path, "assets/");
+  assert.equal(visual.brandAssets[0].manifest, "assets/manifest.json");
+  assert.equal(visual.brandAssets[0].exists, true);
+  assert.equal(visual.brandAssets[0].manifestExists, true);
+  assert.equal(visual.brandAssets[0].description, "Diretório de mídia e brand assets");
+
+  const ingested = ingestPensadorHandoff({ projectRoot: root });
+  assert.equal(ingested.mode, "joint");
+  assert.equal(ingested.visualPackage.prototypes.length, 1);
+  assert.equal(ingested.visualPackage.prototypes[0].path, "prototypes/");
+  assert.equal(ingested.visualPackage.prototypes[0].exists, true);
+  assert.equal(ingested.visualPackage.brandAssets.length, 1);
+  assert.equal(ingested.visualPackage.brandAssets[0].path, "assets/");
+  assert.equal(ingested.visualPackage.brandAssets[0].manifestExists, true);
+});
+

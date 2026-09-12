@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.12.0] — 2026-09-12
+
+- Ingestão visual e inspeção de handoff (`inspectVisualHandoff`): estendido para coletar e validar formalmente os artefatos visuais emitidos pelo Pensador: `ui-prototype` (`prototypes/` com protótipos HTML estáticos/interativos de discovery) e `brand-assets` (`assets/` com `assets/manifest.json` contendo ativos reais de mídia, logos e banners).
+- Prompts de implementação front-end (AGY / `antigravity-coder`): inclusão dos protótipos de discovery no bloco de Contexto e instrução mandatória para uso como SPEC VISUAL dos fluxos, replicando layout, hierarquia, comportamento e textos aprovados sem inferir telas do zero.
+- Review front-end (AGY / `antigravity-agent`): inclusão dos protótipos no bloco de leitura e checklist obrigatório de fidelidade visual contra os protótipos de referência de `prototypes/` para garantir fidelidade às telas aprovadas no discovery.
+- Testes unitários e de integração adicionados em `tests/pensador-ingest.test.mjs`, assegurando 100% de conformidade da ingestão com a suíte de testes (386 testes verdes).
+
 ## [4.11.0] — 2026-09-11
 
 - Bootstrap deterministico centraliza preflight, Project Config e ingestao automatica de `handoff.json`, sem auto-invocacao da skill interna.

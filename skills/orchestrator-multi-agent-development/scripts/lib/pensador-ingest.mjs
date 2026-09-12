@@ -76,7 +76,35 @@ export function inspectVisualHandoff(handoff, handoffPath) {
   };
   const packages = [];
   const findings = [];
+  const prototypes = [];
+  const brandAssets = [];
   for (const artifact of handoff.artifacts ?? []) {
+    if (artifact?.role === "ui-prototype") {
+      const prototypeRoot = resolveArtifactRoot(artifact.path);
+      prototypes.push({
+        path: artifact.path,
+        resolvedPath: prototypeRoot,
+        exists: existsSync(prototypeRoot),
+        description: artifact.description,
+      });
+      continue;
+    }
+    if (artifact?.role === "brand-assets") {
+      const assetRoot = resolveArtifactRoot(artifact.path);
+      const manifestPath = artifact.manifest
+        ? resolveArtifactRoot(artifact.manifest)
+        : join(assetRoot, "manifest.json");
+      brandAssets.push({
+        path: artifact.path,
+        manifest: artifact.manifest ?? "assets/manifest.json",
+        resolvedPath: assetRoot,
+        manifestPath,
+        exists: existsSync(assetRoot),
+        manifestExists: existsSync(manifestPath),
+        description: artifact.description,
+      });
+      continue;
+    }
     if (artifact?.role !== "design-system-files") continue;
     const variant = artifact.variant ?? "legacy-verbatim";
     const packageRoot = resolveArtifactRoot(artifact.path);
@@ -112,6 +140,8 @@ export function inspectVisualHandoff(handoff, handoffPath) {
   }
   return {
     packages,
+    prototypes,
+    brandAssets,
     findings,
     blocking: findings.some((item) => ["critical", "high"].includes(item.severity)),
     degraded: findings.some((item) => item.code === "LEGACY_VERBATIM_DESIGN"),

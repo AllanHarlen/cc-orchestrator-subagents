@@ -42,3 +42,8 @@ Compactação é dry-run por padrão e cria backup antes de aplicar. O schema é
 ## OTLP
 
 `otlp-preview` gera OTLP/HTTP JSON de logs sem conteúdo do usuário. `otlp-export --endpoint` faz envio somente quando explicitamente invocado. HTTPS é obrigatório fora de localhost, salvo `--allow-insecure` consciente.
+# Contrato de tentativa e consumo
+
+Cada attempt registra executor, modelo, sessionId/conversationId, timestamps proprios, `activeDurationMs`, `queueDurationMs`, `userWaitDurationMs` e `usage` (`inputTokens`, `outputTokens`, `cacheCreationTokens`, `cacheReadTokens`, `totalProcessedTokens`). Quando o executor nao expuser usage, grave `usage:null` e identifique-o em `usageMissingExecutor`; nao publique um total global como conhecido.
+
+Nao aplique timestamps terminais em lote. Antes de retry, feche o attempt anterior; o state engine converte um attempt RUNNING superado em `UNKNOWN/RETRY_SUPERSEDED_ATTEMPT`. Um mesmo attempt gera no maximo um outcome terminal. Nao repita chamada quando o hash dos inputs nao mudou. Gates de correcao permitem no maximo duas rodadas; depois disso, `BLOCKED` com findings consolidados.

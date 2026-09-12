@@ -138,22 +138,15 @@ test("a phase cannot start RUNNING while an earlier predecessor is still RUNNING
   );
 });
 
-test("N/A on phase 9.5 (browserE2E, waivable) requires a reason but otherwise succeeds", () => {
+test("N/A on phase 9.5 is rejected because browser E2E is mandatory", () => {
   const { root, artifactDir } = fixture();
   for (const phase of [1, 2, 3, 4, 5, 6, 7, 8, 9]) {
     updatePhase(artifactDir, phase, "DONE", { projectRoot: root, evidence: `t${phase}` });
   }
   assert.throws(
-    () => updatePhase(artifactDir, 9.5, "N/A", { projectRoot: root }),
-    (error) => error instanceof OrchestrationStateError && error.code === "PHASE_WAIVER_REQUIRES_REASON",
+    () => updatePhase(artifactDir, 9.5, "N/A", { projectRoot: root, reason: "no separate front-end deploy" }),
+    (error) => error instanceof OrchestrationStateError && error.code === "PHASE_NOT_WAIVABLE",
   );
-  const result = updatePhase(artifactDir, 9.5, "N/A", {
-    projectRoot: root,
-    reason: "no separate front-end deploy",
-  });
-  assert.equal(result.state.phaseHistory["9.5"].status, "N/A");
-  assert.equal(result.state.completionGates.browserE2E.status, "N/A");
-  assert.equal(result.state.completionGates.browserE2E.required, false);
 });
 
 test("N/A is rejected on a phase whose gate is not waivable", () => {
@@ -167,13 +160,13 @@ test("N/A is rejected on a phase whose gate is not waivable", () => {
   );
 });
 
-test("an N/A phase counts as closed for a later phase's predecessor check", () => {
+test("a completed phase 9.5 counts as closed for a later phase's predecessor check", () => {
   const { root, artifactDir } = fixture();
   for (const phase of [1, 2, 3, 4, 5, 6, 7, 8, 9]) {
     updatePhase(artifactDir, phase, "DONE", { projectRoot: root, evidence: `t${phase}` });
   }
-  updatePhase(artifactDir, 9.5, "N/A", { projectRoot: root, reason: "no separate deploy" });
-  // Nao deve lancar: 9.5 fechado como N/A conta como predecessor fechado.
+  updatePhase(artifactDir, 9.5, "DONE", { projectRoot: root, evidence: "browser-e2e:PASS" });
+  // Nao deve lancar: 9.5 fechado como DONE conta como predecessor fechado.
   const result = updatePhase(artifactDir, 10, "DONE", { projectRoot: root, evidence: "t10" });
   assert.equal(result.state.lastSafePhase, 10);
 });
@@ -273,85 +266,40 @@ test("updateCompletionGate refuses to close monitoring as DONE before any sweep 
   assert.equal(closed.state.completionGates.monitoring.status, "DONE");
 });
 
-test("a valid delegation (matching nextStage.consumer) does not block completion", () => {
+test("browser E2E cannot be delegated as N/A", () => {
   const { root, artifactDir } = fixture();
   closeThroughPhase9(root, artifactDir);
-  updateCompletionGate(artifactDir, "browserE2E", "N/A", {
-    projectRoot: root,
-    required: false,
-    reason: "PENSADOR_CHAIN_DELEGATED_TO_TESTADOR",
-    delegatedTo: "cc-testador-subagents",
-  });
-  updatePhase(artifactDir, 9.5, "N/A", {
-    projectRoot: root,
-    reason: "PENSADOR_CHAIN_DELEGATED_TO_TESTADOR",
-  });
-  for (const name of [
-    "workflow-log.md",
-    "subagents-context.md",
-    "implementation-report.md",
-    "learning-report.md",
-  ]) {
-    writeFileSync(join(artifactDir, name), `# ${name}\n`, "utf8");
-  }
-  writeFileSync(
-    join(artifactDir, "handoff.json"),
-    JSON.stringify({ nextStage: { consumer: "cc-testador-subagents", entrypoint: "/testador" } }),
-    "utf8",
+  assert.throws(
+    () => updateCompletionGate(artifactDir, "browserE2E", "N/A", {
+      projectRoot: root,
+      required: false,
+      reason: "PENSADOR_CHAIN_DELEGATED_TO_TESTADOR",
+      delegatedTo: "cc-testador-subagents",
+    }),
+    (error) => error instanceof OrchestrationStateError && error.code === "GATE_APPLICABILITY_FIXED",
   );
-  sweepStalledTasks(artifactDir, { projectRoot: root });
-  for (const gateId of ["monitoring", "backendReview", "frontendReview", "reports", "handoff", "delivery", "learning"]) {
-    updateCompletionGate(artifactDir, gateId, "DONE", { projectRoot: root, evidence: [`${gateId}:PASS`] });
-  }
-  updatePhase(artifactDir, 10, "DONE", { projectRoot: root, evidence: "t10" });
-  updatePhase(artifactDir, 11, "DONE", { projectRoot: root, evidence: "t11" });
-  updatePhase(artifactDir, 12, "DONE", { projectRoot: root, evidence: "t12" });
-
-  const audit = auditRunCompletion(artifactDir);
-  assert.equal(audit.waivedGates.length, 0);
-  assert.equal(audit.delegatedGates.length, 1);
-  assert.equal(audit.delegatedGates[0].id, "browserE2E");
-  assert.equal(audit.delegatedGates[0].valid, true);
-  assert.equal(audit.invalidDelegations.length, 0);
 });
 
-test("a delegation whose handoff.json points elsewhere is invalid and blocks completion (DELEGATION_WITHOUT_NEXT_STAGE)", () => {
+test("browser E2E refuses delegation even when a downstream handoff exists", () => {
   const { root, artifactDir } = fixture();
   closeThroughPhase9(root, artifactDir);
-  updateCompletionGate(artifactDir, "browserE2E", "N/A", {
-    projectRoot: root,
-    required: false,
-    reason: "PENSADOR_CHAIN_DELEGATED_TO_TESTADOR",
-    delegatedTo: "cc-testador-subagents",
-  });
-  updatePhase(artifactDir, 9.5, "N/A", {
-    projectRoot: root,
-    reason: "PENSADOR_CHAIN_DELEGATED_TO_TESTADOR",
-  });
-  // Testador nao esta instalado -> nextStage degradou para o Executor.
   writeFileSync(
     join(artifactDir, "handoff.json"),
     JSON.stringify({ nextStage: { consumer: "cc-executor-subagents", entrypoint: "/executor" } }),
     "utf8",
   );
 
-  const audit = auditRunCompletion(artifactDir);
-  assert.equal(audit.invalidDelegations.length, 1);
-  assert.equal(audit.invalidDelegations[0].id, "browserE2E");
-  assert.equal(audit.invalidDelegations[0].code, "DELEGATION_WITHOUT_NEXT_STAGE");
-  assert.equal(audit.complete, false);
+  assert.throws(
+    () => updateCompletionGate(artifactDir, "browserE2E", "N/A", { projectRoot: root, required: false, reason: "delegated", delegatedTo: "cc-testador-subagents" }),
+    (error) => error instanceof OrchestrationStateError && error.code === "GATE_APPLICABILITY_FIXED",
+  );
 });
 
-test("a delegation with no handoff.json at all is also invalid (fails closed)", () => {
+test("browser E2E refuses delegation with no handoff", () => {
   const { root, artifactDir } = fixture();
   closeThroughPhase9(root, artifactDir);
-  updateCompletionGate(artifactDir, "browserE2E", "N/A", {
-    projectRoot: root,
-    required: false,
-    reason: "PENSADOR_CHAIN_DELEGATED_TO_TESTADOR",
-    delegatedTo: "cc-testador-subagents",
-  });
-  const audit = auditRunCompletion(artifactDir);
-  assert.equal(audit.invalidDelegations.length, 1);
-  assert.equal(audit.complete, false);
+  assert.throws(
+    () => updateCompletionGate(artifactDir, "browserE2E", "N/A", { projectRoot: root, required: false, reason: "delegated", delegatedTo: "cc-testador-subagents" }),
+    (error) => error instanceof OrchestrationStateError && error.code === "GATE_APPLICABILITY_FIXED",
+  );
 });

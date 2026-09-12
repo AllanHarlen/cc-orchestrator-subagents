@@ -1,5 +1,14 @@
 # Changelog
 
+## [4.11.0] — 2026-09-11
+
+- Bootstrap deterministico centraliza preflight, Project Config e ingestao automatica de `handoff.json`, sem auto-invocacao da skill interna.
+- Pacotes visuais `resolved/` autoritativos e assets declarados passam por inspecao e materializacao programatica.
+- Novo gate deterministico `visualMaterialization` (Fase 4): fechar a Fase 5 (dispatch de tasks front-end) sem `design-materialization.json` com `status: "PASS"` e agora impossivel. Antes, a materializacao do pacote de design so era exigida em prosa — pular a etapa so aparecia depois, de forma indireta e dificil de diagnosticar, como imagens quebradas no gate `visualAudit` da Fase 9.
+- Gates de UI/UX e E2E exigem screenshots desktop/mobile, assercoes semanticas, rastreabilidade de requisito e evidencia de API real.
+- Telemetria por tentativa separa execucao, fila e espera do usuario, registra cache tokens e fecha tentativas antigas antes de retry.
+- `DONE` bloqueia findings visuais altos/criticos, tentativas filhas ativas e integracao/cleanup pendentes.
+
 ## [4.10.1] — 2026-09-09
 
 - Corrigido o caminho de `review/requirements-evidence.json` no layout v2 e o gate agora valida a cobertura de todos os `requirementIds`, critérios com evidência estruturada e findings resolvidos.

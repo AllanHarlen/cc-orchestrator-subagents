@@ -138,6 +138,8 @@ O consumidor nunca adivinha caminhos: descobre tudo via o `handoff.json` do esta
 | `communication-contract` | `communication.md` | quando `backendConfirmed` — **visao legivel derivada** do `api-contract` (`derivedFrom` aponta o arquivo fonte). Nao e a fonte da verdade. |
 | `design-system` | `design-system.md` | **somente no fallback** (front-end sem Open Design) — DESIGN.md inline das 9 secoes. Quando o Open Design e usado, o `DESIGN.md` verbatim (role `design-system-files`) substitui este doc. |
 | `design-system-files` | `design-systems/<id>/` | quando `hasFrontend` **e** um system foi selecionado — **uma entrada por `<id>` concreto** (de `state.designSystems`), relativa ao `artifactRoot` (`.pensador/<slug>-vN/`), com os arquivos verbatim (`tokens.css`, `DESIGN.md`, `components.html`, `preview/`, …). Cada entrada carrega `materializeInto` (o alvo em `state.uiPackageDir`, ex.: `packages/ui/design-systems/<id>/`) que o Orchestrador/Executor usa ao materializar os arquivos na arvore de codigo real (secao 6). |
+| `ui-prototype` | `prototypes/` | quando `hasFrontend` — prototipos HTML estaticos e interativos dos fluxos criticos para inspecao do Orquestrador/Testador e aprovacao visual do usuario. |
+| `brand-assets` | `assets/` | quando `hasFrontend` — diretorio de midia e brand assets reais gerados no DESIGN com o manifesto `assets/manifest.json`. |
 | `openspec-change` | `openspec/changes/<nome>/` | quando `artifactMode = spec` — change set OpenSpec (`proposal.md`, `design.md`, `tasks.md`, `specs/` — `specs/` omitido quando a mudanca declara `skip_specs: true`). **Caminho relativo ao projeto**, nao ao `artifactRoot` (gerido por `/opsx:propose`; consumidores confirmam o estado via `openspec status --change <nome> --json`, nao varredura de arquivos). Substitui `prd`/`userhistory`/`communication-contract` no modo Spec. |
 | `codebase-memory` | `codebase-memory.md` | **sim, sempre** (ambos os modos) — mesma garantia de `architecture`. Mapa do codigo real (simbolos, cadeias de chamada, raio de impacto) e, em brownfield, o baseline do contrato de API existente descoberto por `contractDiscoveryGlobs()` (EXPLORE). |
 | `project-baseline` | `project-baseline.json` | **sim, sempre** (ambos os modos) — resumo estruturado, maquina-legivel, de `isGreenfield`, `techStack`, `apiStyle`, `uiPackageDir` e `existingApiContractGlobs`. Complementa `architecture`/`codebase-memory` (prosa) com campos que o consumidor pode ler direto, sem parsear Markdown, para decidir roteamento e precedencia brownfield sem re-derivar o sinal. |
@@ -261,3 +263,28 @@ node "${CLAUDE_SKILL_DIR}/scripts/validate-handoff.mjs" --file <caminho/para/han
 ```
 
 Saida JSON `{ ok, file, errors[] }`; exit code 0 somente quando `ok: true`. Escopo: `handoffVersion: 1` (secao 4) — valida a forma estrutural do envelope (campos obrigatorios, enums de `stage`/`status`, vocabulario de `role` por `stage`, consistencia `upstream`/`nextStage`), nao invariantes de negocio do estagio produtor (essas continuam na state machine de cada plugin).
+
+
+## 10. Extensao aditiva v1 — pacote visual resolvido
+
+`handoffVersion: 1` permanece. Para um novo handoff visual, a entrada autoritativa e:
+
+```json
+{
+  "role": "design-system-files",
+  "path": "design-systems/<id>/resolved/",
+  "required": true,
+  "variant": "resolved",
+  "authoritative": true,
+  "sourcePath": "design-systems/<id>/original/",
+  "materializeInto": "apps/web/styles/design-systems/<id>/",
+  "assetsManifest": "assets/manifest.json",
+  "validation": { "status": "PASS", "audit": "design-audit.json" }
+}
+```
+
+O produtor preserva `original/` byte a byte e publica apenas `resolved/` como autoridade. O pacote resolvido contem `design-contract.json`, `tokens.css`, `design-tokens.json`, `DESIGN.md`, `components.html`, `preview/`, `assets/manifest.json`, `design-audit.json` e `provenance.json`. O consumidor carrega `design-contract.json`, `tokens.css`, `DESIGN.md` e `assets/manifest.json` como priority-files, copia assets conforme `materializeInto` e aplica `seedBindings`; nao gera imagens nem reabre decisoes visuais.
+
+Entrada antiga sem `variant` e aceita como `legacy-verbatim`, com aviso de degradacao e gates visuais reforcados. Finding alto/critico, audit diferente de `PASS`, asset `required` ausente ou artefato obrigatorio descartado bloqueia dispatch e `DONE`.
+
+Assets funcionais de iconografia sao vetoriais, com pacote/versao/uso no contrato; emoji nao substitui icone. Evidencia visual exige screenshot, assercao de navegador, rota, viewport, requisito e prova de API real — hash de commit sozinho nao e evidencia visual.

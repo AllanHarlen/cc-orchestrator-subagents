@@ -1,7 +1,8 @@
 ---
 description: Conduzir, retomar e manter um workflow multiagentico persistente que acumula conhecimento comprovado, com state machine, lifecycle, worktrees, validacao deterministica, telemetria e learning
 argument-hint: "help | preflight | project-config | brain-pensador [--limit N] [--all] | status [runId] | resume [runId] | knowledge <sub> | telemetry <sub> | [--model <id>] [--parallel] [--subagent-model <id>] [--effort <nivel>] [--timeout <duracao>] <PRD>"
-allowed-tools: Read, Write, Edit, Glob, Grep, Bash(node:*), AskUserQuestion, Agent, TaskCreate, TaskUpdate, TaskList, Skill
+disable-model-invocation: true
+allowed-tools: Read, Write, Edit, Glob, Grep, Bash(node:*), AskUserQuestion, Agent, TaskCreate, TaskUpdate, TaskList
 ---
 
 # /orchestrator
@@ -105,7 +106,28 @@ Cada run mantem `.orchestrator/runs/<slug>/state.json` e `events.jsonl`; o proje
 
 ## Fluxo
 
-### Passo 1 - Preflight, configuracao do projeto e instalacao assistida
+### Passo 1 - Bootstrap deterministico
+
+O bootstrap e a unica autoridade do preflight inicial, da Project_Config e da descoberta do handoff. Parseie primeiro subcomandos/flags e execute uma vez:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/orchestrator-bootstrap.mjs" --root "." [--slug "<slug>"] [--has-specification true]
+```
+
+Trate os estados literalmente:
+
+- `NEEDS_PROJECT_CONFIG`: colete os quatro papeis, grave a configuracao e reexecute o bootstrap exatamente uma vez; nao encerre a invocacao.
+- `BLOCKED_DEPENDENCY`: apresente `blockers` e remediacao; nao carregue o workflow.
+- `AMBIGUOUS_HANDOFF`: pergunte somente qual slug usar e reexecute com `--slug`.
+- `READY_JOINT`: ingira automaticamente `ingestion.handoffPath`; nao peca PRD.
+- `READY_STANDALONE`: use a especificacao recebida.
+- `NEEDS_SPECIFICATION`: somente agora peca PRD/spec.
+
+Cada resultado carrega um unico `probeId` e `generatedAt`. Nao rode `preflight.mjs` em paralelo ou novamente por instrucao textual. As secoes abaixo sao referencias de remediacao consumidas pelo bootstrap.
+
+### Referencia de configuracao e instalacao assistida
+
+Esta referencia nao autoriza probes adicionais: qualquer mencao historica a multiplos preflights deve ser interpretada como uma unica execucao/reexecucao do bootstrap descrito acima.
 
 A Fase 0 tem quatro etapas, nesta ordem: preflight, resolucao da Project_Config, instalacao assistida e novo preflight. A ordem e obrigatoria — a coleta da configuracao vem antes de qualquer oferta de instalacao, porque o conjunto de CLIs obrigatorias depende dos papeis escolhidos. Numa run nova sem arquivo de configuracao isso produz ate tres preflights.
 
@@ -114,7 +136,7 @@ Leia `references/project-config.md` (perguntas, defaults, roteamento derivado, p
 #### Passo 1.1 - Preflight
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/preflight.mjs"
+node "${CLAUDE_PLUGIN_ROOT}/scripts/orchestrator-bootstrap.mjs" --root "."
 ```
 
 Parse o JSON retornado:
@@ -140,7 +162,7 @@ Tambem exige Node.js `>=22.13.0`, `node:sqlite` sem flag experimental e SQLite F
 Decida pelo bloco `projectConfig` e pelo check `checks.config.project-config`:
 
 - `source: "file"` -> a configuracao existe e e valida. Carregue-a e **nao repita as quatro perguntas**; va direto para o Passo 1.3.
-- `source: "default"` com arquivo ausente -> apresente as quatro perguntas de `AskUserQuestion` (`backendExecutor`, `frontendExecutor`, `frontendReviewer`, `backendReviewer`) **antes de oferecer qualquer instalacao**, com as descricoes e a CLI exigida por opcao de `references/project-config.md`. Grave com `project-config write` (papel sem resposta vai em `--default-applied` e recebe o default) e rode o preflight novamente para obter o Required_CLI_Set efetivo.
+- `source: "default"` com arquivo ausente -> apresente as quatro perguntas de `AskUserQuestion` (`backendExecutor`, `frontendExecutor`, `frontendReviewer`, `backendReviewer`) **antes de oferecer qualquer instalacao**, com as descricoes e a CLI exigida por opcao de `references/project-config.md`. Grave com `project-config write` (papel sem resposta vai em `--default-applied` e recebe o default) e reexecute o bootstrap exatamente uma vez para obter o Required_CLI_Set efetivo.
 - `checks.config.project-config.ok: false` -> o arquivo existe e e invalido. Pare com o erro do parser e a remediacao de corrigir ou remover `.orchestrator/project-config.md`, preservando o conteudo atual. Nao sobrescreva o arquivo dentro de uma run.
 
 Registre em `report/workflow-log.md` a configuracao efetiva, a origem e os papeis com `default-aplicado`. `frontendReviewer: codex` sobrepoe a politica padrao de review front-end pelo AGY: registre a sobreposicao e avise o usuario uma unica vez por run.
@@ -154,18 +176,20 @@ Com a Project_Config resolvida, monte a lista de dependencias ausentes: CBM_MCP 
 - Passos interativos ficam com o usuario: `codex login` depois da CLI `codex`, primeira execucao de `agy` para autenticar o AGY, e reinicio do agente de codigo para carregar um MCP recem-instalado.
 - Exit code diferente de zero -> registre o codigo de saida e a ultima linha de erro, apresente a remediacao manual e peca decisao ao usuario antes de prosseguir. Sem loop de retry.
 - `seguir sem instalar` em dependencia opcional (MCP) -> registre a limitacao em `report/workflow-log.md` e siga pelo caminho deterministico de `references/mcp-context.md`.
-- `seguir sem instalar` em CLI do Required_CLI_Set -> ofereca por `AskUserQuestion` trocar o papel afetado para `claude-code` (regravando a configuracao e rodando o preflight de novo) ou encerrar o workflow. Nunca troque o papel por conta propria.
+- `seguir sem instalar` em CLI do Required_CLI_Set -> ofereca por `AskUserQuestion` trocar o papel afetado para `claude-code` e retomar por uma nova invocacao manual, ou encerrar o workflow. Nunca troque o papel por conta propria nem inicie outro probe nesta invocacao.
 - Registre por dependencia apenas `name`, `decision`, `command`, `exitCode` e `durationMs` (`summarizeInstallOutcome`). Nada de stdout bruto, conteudo de arquivo de configuracao, chave de API ou cabecalho de autenticacao.
 
-#### Passo 1.4 - Novo preflight
+#### Revalidacao pelo bootstrap
 
-Concluidos todos os comandos confirmados, rode o preflight uma vez e apresente ao usuario o novo `status`, o Required_CLI_Set efetivo, os itens reprovados e os avisos. Esse preflight e obrigatorio mesmo que toda instalacao tenha retornado zero — e ele que confirma que a dependencia ficou visivel para o ambiente.
+Nao execute um probe adicional se o bootstrap ja retornou `READY_*`; esta secao descreve apenas os campos que a reexecucao unica apresenta.
+
+Concluidos todos os comandos confirmados, consuma o resultado da reexecucao unica do bootstrap e apresente ao usuario o novo `status`, o Required_CLI_Set efetivo, os itens reprovados e os avisos. Nao chame `preflight.mjs` diretamente dentro do fluxo principal.
 
 Com `checks.optional.mcp.codebase-memory.ok: true`, o protocolo de grafo de `references/mcp-context.md` passa a valer (gate de `index_status` antes de usar qualquer resultado como evidencia). Com `checks.optional.mcp.context7.ok: true`, avise o usuario que documentacao atual sera exigida nos prompts dos subagentes.
 
-### Passo 2 - Carregar a skill
+### Passo 2 - Carregar o workflow interno
 
-`Skill(skill="cc-orchestrador-subagents:orchestrator-multi-agent-development")`.
+Leia diretamente `${CLAUDE_PLUGIN_ROOT}/skills/orchestrator-multi-agent-development/SKILL.md` com `Read` e, por progressive disclosure, apenas as referencias exigidas pela fase atual. Nunca chame programaticamente a skill interna: ela permanece protegida contra auto-invocacao.
 
 ### Passo 3 - Validacoes leves antes da ingestao
 
@@ -180,7 +204,7 @@ Antes dessas validacoes, parseie as flags no inicio de `$ARGUMENTS` (em qualquer
 Remova todos os prefixos reconhecidos do argumento. Sem override de modelo, registre `agyModelSource: heuristic`. Sem `--parallel`, o orquestrador avalia por heuristica task a task.
 
 - Se a demanda e trivial (typo, padding, rename) -> avise que o orquestrador e overkill e ofereca executar direto.
-- Se o usuario nao forneceu um PRD/especificacao (nenhum arquivo mencionado/enviado e nenhuma spec colada) -> use `AskUserQuestion` pedindo o PRD/spec antes de continuar. O orquestrador nao inventa a especificacao.
+- Peca PRD/spec somente quando o bootstrap retornar `NEEDS_SPECIFICATION`. `READY_JOINT` sempre tem precedencia sobre a ausencia de argumentos.
 
 ### Passo 3.5 - Carregar conhecimento comprovado
 
@@ -247,7 +271,7 @@ Mantenha o usuario informado com mensagens curtas:
 - `preflight OK`
 - se houve auto-correcao: `preflight auto-remediou Bash(node:*) em .claude/settings.json e revalidou`
 - `stack do projeto: back-end <executor>, front-end <executor>, review back-end <revisor>, review front-end <revisor> (origem: file|default)`
-- se houve instalacao: `instalei <N> dependencias confirmadas e rodei o preflight de novo: status <ok|failed>`
+- se houve instalacao: `instalei <N> dependencias confirmadas; bootstrap revalidado: status <ok|failed>`
 - `Context7 MCP detectado; vou exigir docs atuais nos prompts dos subagentes`
 - `Codebase Memory MCP detectado; vou consultar index_status antes de usar o grafo como evidencia`
 - `Project Memory auditada; carreguei apenas fatos validados e projetei o historico pesquisavel`

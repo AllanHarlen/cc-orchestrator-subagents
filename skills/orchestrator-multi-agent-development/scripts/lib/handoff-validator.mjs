@@ -50,6 +50,8 @@ export const HANDOFF_ROLES_BY_STAGE = Object.freeze({
     "communication-contract",
     "design-system",
     "design-system-files",
+    "ui-prototype",
+    "brand-assets",
     "openspec-change",
     "codebase-memory",
     "project-baseline",

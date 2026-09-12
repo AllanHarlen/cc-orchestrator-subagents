@@ -29,7 +29,7 @@ test("check-prompt-budget --agent agy approves a prompt under the limit", () => 
 });
 
 test("check-prompt-budget --agent agy rejects a prompt over the limit with exit 1 (hard limit)", () => {
-  const result = run(["--agent", "agy", "--stdin"], "a".repeat(28_001));
+  const result = run(["--agent", "agy", "--stdin"], "a".repeat(24_001));
   assert.equal(result.status, 1);
   const parsed = JSON.parse(result.stdout || result.stderr);
   assert.equal(parsed.ok, false);
@@ -40,7 +40,7 @@ test("check-prompt-budget --agent agy rejects a prompt over the limit with exit 
 });
 
 test("check-prompt-budget --agent codex never fails on an over-limit prompt (advisory, exit 0)", () => {
-  const result = run(["--agent", "codex", "--stdin"], "a".repeat(28_001));
+  const result = run(["--agent", "codex", "--stdin"], "a".repeat(24_001));
   assert.equal(result.status, 0, result.stderr);
   const parsed = JSON.parse(result.stdout);
   assert.equal(parsed.agent, "codex");

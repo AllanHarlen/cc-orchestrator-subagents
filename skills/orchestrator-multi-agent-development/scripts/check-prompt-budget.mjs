@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * Mede um prompt de delegacao contra o orcamento de 28.000 caracteres, com
+ * Mede um prompt de delegacao contra o orcamento de 24.000 caracteres, com
  * semantica diferente por agente:
  *
  * - `--agent agy`: limite duro. O gargalo real e a chamada `agy --print <prompt>`
@@ -27,7 +27,7 @@ import { resolve } from "node:path";
 
 import { executeJsonCli, numberArg, parseArgs, required } from "./lib/cli-utils.mjs";
 
-export const PROMPT_CHAR_LIMIT = 28_000;
+export const PROMPT_CHAR_LIMIT = 24_000;
 const HARD_LIMIT_AGENTS = new Set(["agy"]);
 const ADVISORY_LIMIT_AGENTS = new Set(["codex"]);
 

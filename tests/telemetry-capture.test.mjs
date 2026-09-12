@@ -155,6 +155,9 @@ test("--new-attempt on a RUNNING->RUNNING redispatch increments attempt and open
   const task = redispatched.state.tasks["BE-01"];
   assert.equal(task.attempt, 2);
   assert.equal(task.attemptHistory.length, 2);
+  assert.equal(task.attemptHistory[0].status, "UNKNOWN");
+  assert.equal(task.attemptHistory[0].reasonCode, "RETRY_SUPERSEDED_ATTEMPT");
+  assert.ok(task.attemptHistory[0].completedAt);
   assert.equal(task.attemptHistory[1].conversationId, "conv-resumed");
   assert.equal(task.startedAt, "2026-01-01T00:05:10.000Z");
 });
@@ -244,4 +247,30 @@ test("codexEffort is captured per attempt, distinct from the planned agyEffort/m
   assert.equal(state.tasks["BE-01"].resolvedModel, "gpt-5.6-terra");
   assert.equal(state.tasks["BE-01"].codexEffort, "high");
   assert.equal(state.tasks["BE-01"].attemptHistory[0].codexEffort, "high");
+});
+
+test("attempt telemetry separates active, queue and user wait durations and preserves cache token usage", () => {
+  const { root, artifactDir } = fixture("attempt-usage");
+  updateTaskStatus(artifactDir, "BE-01", "RUNNING", {
+    projectRoot: root,
+    executor: "codex",
+    sessionId: "session-1",
+    conversationId: "conversation-1",
+    startedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const result = updateTaskStatus(artifactDir, "BE-01", "DONE", {
+    projectRoot: root,
+    completedAt: "2026-01-01T00:00:10.000Z",
+    activeDurationMs: 7_000,
+    queueDurationMs: 2_000,
+    userWaitDurationMs: 1_000,
+    usage: { inputTokens: 100, outputTokens: 50, cacheCreationTokens: 25, cacheReadTokens: 75, totalProcessedTokens: 250 },
+    evidence: ["executor:BE-01:DONE"],
+  });
+  const attempt = result.state.tasks["BE-01"].attemptHistory.at(-1);
+  assert.equal(attempt.activeDurationMs, 7_000);
+  assert.equal(attempt.queueDurationMs, 2_000);
+  assert.equal(attempt.userWaitDurationMs, 1_000);
+  assert.equal(attempt.usage.cacheCreationTokens, 25);
+  assert.equal(attempt.usage.totalProcessedTokens, 250);
 });

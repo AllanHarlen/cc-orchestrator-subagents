@@ -34,6 +34,13 @@ const ALLOWED_FIELDS = new Set([
   "startedAt",
   "completedAt",
   "durationMs",
+  "activeDurationMs",
+  "queueDurationMs",
+  "userWaitDurationMs",
+  "sessionId",
+  "conversationId",
+  "usage",
+  "usageMissingExecutor",
   "result",
   "reasonCode",
   "errorFingerprint",
@@ -44,6 +51,9 @@ const ALLOWED_FIELDS = new Set([
   "contractCount",
   "evidenceCount",
   "workspaceId",
+  "sessionId",
+  "conversationId",
+  "usageMissingExecutor",
   "apiCalls",
   "toolCalls",
   "metadata",
@@ -75,6 +85,9 @@ const OPTIONAL_STRING_FIELDS = new Set([
   "errorFingerprint",
   "reviewResult",
   "workspaceId",
+  "sessionId",
+  "conversationId",
+  "usageMissingExecutor",
 ]);
 const BOOLEAN_METADATA_FIELDS = new Set(["finalAttempt", "sourcePresent", "firstPass"]);
 const STRING_METADATA_FIELDS = new Set([
@@ -157,6 +170,9 @@ function sanitizeEvent(input) {
   for (const key of [
     "attempt",
     "durationMs",
+    "activeDurationMs",
+    "queueDurationMs",
+    "userWaitDurationMs",
     "regressions",
     "filesChangedCount",
     "contractCount",
@@ -169,6 +185,13 @@ function sanitizeEvent(input) {
         "INVALID_TELEMETRY_NUMBER",
         `Telemetry ${key} must be a non-negative integer`,
       );
+    }
+  }
+  if (event.usage != null) {
+    const allowedUsage = new Set(["inputTokens", "outputTokens", "cacheCreationTokens", "cacheReadTokens", "totalProcessedTokens", "totalTokens"]);
+    if (typeof event.usage !== "object" || Array.isArray(event.usage)) throw new TelemetryError("INVALID_TELEMETRY_USAGE", "Telemetry usage must be an object or null");
+    for (const [key, value] of Object.entries(event.usage)) {
+      if (!allowedUsage.has(key) || !Number.isInteger(value) || value < 0) throw new TelemetryError("INVALID_TELEMETRY_USAGE", `Invalid telemetry usage field: ${key}`);
     }
   }
   for (const [key, value] of Object.entries(event)) {
@@ -350,6 +373,13 @@ export function projectRunTelemetry(projectRoot, artifactDir) {
         startedAt: attempt.startedAt ?? null,
         completedAt: attempt.completedAt ?? null,
         durationMs: Number.isFinite(attempt.durationMs) ? Number(attempt.durationMs) : null,
+        activeDurationMs: Number.isFinite(attempt.activeDurationMs) ? Number(attempt.activeDurationMs) : null,
+        queueDurationMs: Number.isFinite(attempt.queueDurationMs) ? Number(attempt.queueDurationMs) : 0,
+        userWaitDurationMs: Number.isFinite(attempt.userWaitDurationMs) ? Number(attempt.userWaitDurationMs) : 0,
+        sessionId: attempt.sessionId ?? null,
+        conversationId: attempt.conversationId ?? null,
+        usage: attempt.usage ?? null,
+        usageMissingExecutor: attempt.usage ? null : (attempt.executor ?? task.executor ?? "unknown"),
         result: attemptResult,
         reasonCode: attempt.reasonCode ?? null,
         errorFingerprint: attempt.reasonCode ? sha(String(attempt.reasonCode).toLowerCase()) : null,

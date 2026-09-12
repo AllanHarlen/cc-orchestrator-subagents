@@ -100,10 +100,14 @@ const USAGE_KEY_ALIASES = Object.freeze({
   completionTokens: "outputTokens",
   cache_read_tokens: "cacheReadTokens",
   cacheReadTokens: "cacheReadTokens",
+  cache_creation_tokens: "cacheCreationTokens",
+  cacheCreationTokens: "cacheCreationTokens",
   cached_tokens: "cacheReadTokens",
   cachedTokens: "cacheReadTokens",
-  total_tokens: "totalTokens",
-  totalTokens: "totalTokens",
+  total_tokens: "totalProcessedTokens",
+  totalTokens: "totalProcessedTokens",
+  total_processed_tokens: "totalProcessedTokens",
+  totalProcessedTokens: "totalProcessedTokens",
 });
 
 function normalizeUsage(value) {
@@ -115,9 +119,10 @@ function normalizeUsage(value) {
     if (!canonical || !Number.isFinite(number) || number < 0) continue;
     usage[canonical] = Math.trunc(number);
   }
-  if (usage.totalTokens == null && usage.inputTokens != null && usage.outputTokens != null) {
-    usage.totalTokens = usage.inputTokens + usage.outputTokens;
+  if (usage.totalProcessedTokens == null && usage.inputTokens != null && usage.outputTokens != null) {
+    usage.totalProcessedTokens = usage.inputTokens + usage.outputTokens + (usage.cacheCreationTokens ?? 0) + (usage.cacheReadTokens ?? 0);
   }
+  if (usage.totalProcessedTokens != null) usage.totalTokens = usage.totalProcessedTokens;
   return Object.keys(usage).length > 0 ? usage : null;
 }
 
@@ -238,6 +243,10 @@ export function adaptExecutorProbe(executor, rawInput, options = {}) {
       : null,
     lastActivityAt: firstValue(raw, ["lastActivityAt", "last_activity_at", "updatedAt", "updated_at"]) ?? stream.lastActivityAt,
     completedAt: firstValue(raw, ["completedAt", "completed_at", "finishedAt", "finished_at"]),
+    startedAt: firstValue(raw, ["startedAt", "started_at"]),
+    activeDurationMs: nonNegativeNumber(firstValue(raw, ["activeDurationMs", "active_duration_ms"])),
+    queueDurationMs: nonNegativeNumber(firstValue(raw, ["queueDurationMs", "queue_duration_ms"])),
+    userWaitDurationMs: nonNegativeNumber(firstValue(raw, ["userWaitDurationMs", "user_wait_duration_ms"])),
     apiCalls: rawApiCalls == null ? undefined : Number(rawApiCalls),
     toolCalls: rawToolCalls == null ? undefined : Number(rawToolCalls),
     currentTool: firstValue(raw, ["currentTool", "current_tool"]) ?? stream.currentTool,

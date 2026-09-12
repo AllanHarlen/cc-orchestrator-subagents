@@ -16,6 +16,7 @@ import {
 } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { isDeepStrictEqual } from "node:util";
+import { validateUiEvidence } from "../validate-ui-evidence.mjs";
 import {
   ARTIFACT_LAYOUT_VERSION,
   SUPPORTED_ARTIFACT_LAYOUT_VERSIONS,
@@ -126,10 +127,22 @@ export const COMPLETION_GATE_DEFINITIONS = Object.freeze({
   // de fecha-la — uma wave inteira podia terminar em segundo plano sem que
   // tick/watch/sweep nunca rodasse. updateCompletionGate agora tambem exige
   // `lifecycle.lastSweepAt` presente (GATE_MONITORING_REQUIRES_SWEEP).
+  // Achado (analise sessao Codex 2026-09-11): a Fase 4 instruia rodar
+  // materialize-visual-handoff.mjs "antes do dispatch" apenas em prosa
+  // (references/workflow.md, references/subagent-prompts.md) — nada impedia
+  // uma task front-end ser despachada sem o pacote de design/assets ter sido
+  // de fato materializado. O sintoma so aparecia depois, de forma indireta e
+  // dificil de diagnosticar, no gate visualAudit (imagens quebradas/ausentes
+  // sem apontar a causa raiz). Este gate torna a materializacao tao
+  // obrigatoria quanto qualquer outra: fechar a fase 5 sem fechar a fase 4
+  // e agora impossivel (assertPhaseTransition), e fechar a 4 sem evidencia
+  // tambem (GATE_DONE_REQUIRES_EVIDENCE em updateCompletionGate).
+  visualMaterialization: { phase: 4, label: "Design package materialization" },
   monitoring: { phase: 6, label: "Monitoring telemetry" },
   backendReview: { phase: 8, label: "Back-end review" },
   frontendReview: { phase: 9, label: "Front-end review" },
-  browserE2E: { phase: 9.5, label: "Real-browser E2E", waivable: true },
+  visualAudit: { phase: 9, label: "Semantic UI/UX evidence" },
+  browserE2E: { phase: 9.5, label: "Real-browser E2E" },
   requirementsCoverage: { phase: 10, label: "Requirements evidence" },
   reports: { phase: 10, label: "Reports" },
   handoff: { phase: 10, label: "Handoff" },
@@ -1576,8 +1589,10 @@ function completionGateRequirements(tasks) {
   const { backend, frontend } = taskCategoryFlags(tasks);
   return {
     monitoring: true,
+    visualMaterialization: frontend,
     backendReview: backend,
     frontendReview: frontend,
+    visualAudit: frontend,
     // Todo front-end exige verificacao em navegador real. A parte mecanicamente decidivel
     // aqui e apenas "existe front-end"; se a topologia nao tiver origens separadas, a
     // dispensa e uma decisao arquitetural que precisa ficar registrada como waiver com
@@ -2068,6 +2083,8 @@ const GATE_ARTIFACT_CANDIDATES = Object.freeze({
   monitoring: [["monitoring.md"]],
   backendReview: [["review-final.md"]],
   frontendReview: [["review-frontend.md"]],
+  visualMaterialization: [["design-materialization.json"]],
+  visualAudit: [["ui-evidence.json"]],
   browserE2E: [["browser-e2e-report.md"], ["e2e-report.md"], ["e2e-verification.md"]],
   requirementsCoverage: [["requirements-evidence.json"]],
   reports: [["workflow-log.md", "subagents-context.md", "implementation-report.md"]],
@@ -2192,6 +2209,36 @@ export function updateCompletionGate(artifactDir, gateId, status, options = {}) 
         `Completion gate ${normalizedGateId} cannot be DONE without evidence`,
       );
     }
+    if (normalizedGateId === "visualMaterialization" && normalizedStatus === "DONE") {
+      const materializationEvidence = resolveArtifact(artifactDir, "design-materialization.json");
+      if (!materializationEvidence) {
+        throw new OrchestrationStateError("DESIGN_MATERIALIZATION_MISSING", "visualMaterialization requires design-materialization.json");
+      }
+      let report;
+      try {
+        report = JSON.parse(readFileSync(materializationEvidence.path, "utf8"));
+      } catch (error) {
+        throw new OrchestrationStateError("DESIGN_MATERIALIZATION_INVALID", `Could not parse design-materialization.json: ${error.message}`);
+      }
+      if (report.status !== "PASS") {
+        throw new OrchestrationStateError(
+          "DESIGN_MATERIALIZATION_BLOCKED",
+          "visualMaterialization cannot be DONE while the resolved design package has blocking findings",
+          report,
+        );
+      }
+    }
+    if (normalizedGateId === "visualAudit" && normalizedStatus === "DONE") {
+      const visualEvidence = resolveArtifact(artifactDir, "ui-evidence.json");
+      if (!visualEvidence) throw new OrchestrationStateError("UI_EVIDENCE_MISSING", "visualAudit requires ui-evidence.json");
+      let result;
+      try {
+        result = validateUiEvidence(JSON.parse(readFileSync(visualEvidence.path, "utf8")), { baseDir: dirname(visualEvidence.path) });
+      } catch (error) {
+        throw new OrchestrationStateError("UI_EVIDENCE_INVALID", `Could not validate ui-evidence.json: ${error.message}`);
+      }
+      if (!result.ok) throw new OrchestrationStateError("UI_EVIDENCE_BLOCKED", "visualAudit cannot be DONE while semantic UI/UX findings remain", result);
+    }
     // Acompanhamento estrutural (analise-run-oficina-saas-20260906.md): o gate
     // acima ja exige evidencia para fechar a fase 6, mas nao exige que o
     // monitoramento tenha de fato rodado *durante* ela — uma run pode
@@ -2286,6 +2333,9 @@ function mergeTaskFields(previous, status, options, now, git) {
   if (options.retryDirective !== undefined) task.retryDirective = options.retryDirective || null;
   if (options.usage !== undefined) task.usage = options.usage ? clone(options.usage) : null;
   if (options.durationSeconds !== undefined) task.durationSeconds = options.durationSeconds ?? null;
+  if (options.activeDurationMs !== undefined) task.activeDurationMs = options.activeDurationMs ?? null;
+  if (options.queueDurationMs !== undefined) task.queueDurationMs = options.queueDurationMs ?? null;
+  if (options.userWaitDurationMs !== undefined) task.userWaitDurationMs = options.userWaitDurationMs ?? null;
   if (options.numTurns !== undefined) task.numTurns = options.numTurns ?? null;
   if (options.reasonCode !== undefined) task.reasonCode = options.reasonCode || null;
   if (options.reason !== undefined) task.reason = options.reason || null;
@@ -2354,6 +2404,21 @@ function mergeTaskFields(previous, status, options, now, git) {
     // seria falso aqui e o attempt nunca avancaria mesmo com --new-attempt.
     const declaredSameStatusAttempt = sameStatus && options.newAttempt === true;
     const newAttempt = declaredSameStatusAttempt || (!sameStatus && !recoveringSameAttempt);
+    if (newAttempt && Number(task.attempt ?? 0) > 0) {
+      const previousIndex = task.attemptHistory.findIndex((entry) => Number(entry.attempt) === Number(task.attempt));
+      if (previousIndex >= 0 && task.attemptHistory[previousIndex].status === "RUNNING") {
+        const previousRunning = task.attemptHistory[previousIndex];
+        const startedMs = Date.parse(previousRunning.startedAt ?? "");
+        const completedMs = Date.parse(now);
+        task.attemptHistory[previousIndex] = {
+          ...previousRunning,
+          status: "UNKNOWN",
+          reasonCode: "RETRY_SUPERSEDED_ATTEMPT",
+          completedAt: now,
+          durationMs: Number.isFinite(startedMs) && Number.isFinite(completedMs) ? Math.max(0, completedMs - startedMs) : null,
+        };
+      }
+    }
     if (newAttempt) task.attempt = Number(task.attempt ?? 0) + 1;
     if (newAttempt) {
       if (options.resolvedModel === undefined) task.resolvedModel = null;
@@ -2386,6 +2451,9 @@ function mergeTaskFields(previous, status, options, now, git) {
         : task.startedAt,
       completedAt: null,
       durationMs: null,
+      activeDurationMs: task.activeDurationMs ?? null,
+      queueDurationMs: task.queueDurationMs ?? null,
+      userWaitDurationMs: task.userWaitDurationMs ?? null,
       reasonCode: null,
       reviewResult: null,
       regressions: 0,
@@ -2443,6 +2511,9 @@ function mergeTaskFields(previous, status, options, now, git) {
       durationMs: Number.isFinite(startedMs) && Number.isFinite(completedMs)
         ? Math.max(0, completedMs - startedMs)
         : null,
+      activeDurationMs: task.activeDurationMs ?? previousAttempt.activeDurationMs ?? (Number.isFinite(startedMs) && Number.isFinite(completedMs) ? Math.max(0, completedMs - startedMs) : null),
+      queueDurationMs: task.queueDurationMs ?? previousAttempt.queueDurationMs ?? 0,
+      userWaitDurationMs: task.userWaitDurationMs ?? previousAttempt.userWaitDurationMs ?? 0,
       reasonCode: task.reasonCode ?? null,
       reviewResult: task.reviewResult ?? null,
       regressions: Number(task.regressions ?? 0),
@@ -2779,6 +2850,9 @@ function reconcileTask(task, probe, projectRoot, git, now) {
   if (probe?.model) next.resolvedModel = probe.model;
   if (probe?.retryDirective) next.retryDirective = probe.retryDirective;
   if (probe?.usage) next.usage = clone(probe.usage);
+  if (probe?.activeDurationMs != null) next.activeDurationMs = probe.activeDurationMs;
+  if (probe?.queueDurationMs != null) next.queueDurationMs = probe.queueDurationMs;
+  if (probe?.userWaitDurationMs != null) next.userWaitDurationMs = probe.userWaitDurationMs;
   if (probe?.durationSeconds != null) next.durationSeconds = probe.durationSeconds;
   if (probe?.numTurns != null) next.numTurns = probe.numTurns;
   const external = normalizeExternalStatus(probe);
@@ -2940,6 +3014,9 @@ function reconcileTask(task, probe, projectRoot, git, now) {
       durationMs: terminal && Number.isFinite(startedMs) && Number.isFinite(completedMs)
         ? Math.max(0, completedMs - startedMs)
         : null,
+      activeDurationMs: next.activeDurationMs ?? previousAttempt.activeDurationMs ?? null,
+      queueDurationMs: next.queueDurationMs ?? previousAttempt.queueDurationMs ?? 0,
+      userWaitDurationMs: next.userWaitDurationMs ?? previousAttempt.userWaitDurationMs ?? 0,
       reasonCode: next.reasonCode ?? null,
       reviewResult: next.reviewResult ?? null,
       regressions: Number(next.regressions ?? 0),
@@ -3652,6 +3729,12 @@ function completionAudit(artifactDir, state) {
     }
     return task.status !== "DONE";
   });
+  const pendingWorkspaces = tasks.filter((task) => task.workspace && (
+    task.workspace.integrationStatus !== "MERGED" || task.workspace.cleanupStatus !== "CLEANED"
+  ));
+  const doneParentsWithActiveChildren = tasks.filter((parent) => parent.status === "DONE" && tasks.some((child) =>
+    (child.parentTaskId === parent.id || child.parentId === parent.id) && child.status === "RUNNING",
+  ));
   const tasksWithoutEvidencePlan = tasks.filter(
     (task) =>
       task.sourcePresent !== false &&
@@ -3713,6 +3796,8 @@ function completionAudit(artifactDir, state) {
     tasks.length > 0 &&
     phaseComplete &&
     incompleteTasks.length === 0 &&
+    pendingWorkspaces.length === 0 &&
+    doneParentsWithActiveChildren.length === 0 &&
     tasksWithoutEvidencePlan.length === 0 &&
     unresolvedScope.length === 0 &&
     incompleteGates.length === 0 &&
@@ -3725,6 +3810,8 @@ function completionAudit(artifactDir, state) {
     taskCount: tasks.length,
     phaseComplete,
     incompleteTasks: incompleteTasks.map((task) => ({ id: task.id, status: task.status })),
+    pendingWorkspaces: pendingWorkspaces.map((task) => ({ id: task.id, integrationStatus: task.workspace.integrationStatus, cleanupStatus: task.workspace.cleanupStatus })),
+    doneParentsWithActiveChildren: doneParentsWithActiveChildren.map((task) => task.id),
     tasksWithoutEvidencePlan: tasksWithoutEvidencePlan.map((task) => task.id),
     unresolvedScope: unresolvedScope.map((task) => task.id),
     incompleteGates: incompleteGates.map((gate) => ({ id: gate.id, status: gate.status })),

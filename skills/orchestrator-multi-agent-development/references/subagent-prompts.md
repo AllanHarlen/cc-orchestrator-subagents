@@ -155,7 +155,7 @@ subagente — `antigravity-coder` nao tem ferramenta de escrita, so `Bash(node *
 persiste o corpo em `run/prompts/<taskId>.md` antes de invocar o subagente, e a instrucao do
 subagente e so passar `--task-file ".orchestrator/runs/<slug>/run/prompts/<taskId>.md"` para o bridge —
 o proprio bridge le o arquivo. Isso protege o salto Bash→bridge do limite de linha de comando (nao
-muda o orcamento de 28.000 chars do salto bridge→agy, que continua real). Meca o mesmo arquivo antes
+muda o orcamento de 24.000 chars do salto bridge→agy, que continua real). Meca o mesmo arquivo antes
 de despachar:
 `node "${CLAUDE_SKILL_DIR}/scripts/check-prompt-budget.mjs" --agent agy --file
 .orchestrator/runs/<slug>/run/prompts/<taskId>.md` — para AGY isso e limite duro (`advisory: false`,
@@ -183,7 +183,7 @@ Registre no retorno quais skills foram utilizadas.
 Contexto:
 - especificacao (PRD/spec): <COLAR TRECHO RELEVANTE OU CAMINHO DO ARQUIVO>
 - task atual: <TASK ID - TITULO>
-- setor/industria do negocio: <COLAR sectorContext do PRD/design-system.md, ex.: "oficina automotiva de carro/moto" | "N/A (nao informado)"> — use isso para julgar quais imagens/icones fazem sentido; nao invente um segmento diferente do produto real
+- pacote visual autoritativo: <CAMINHOS design-contract.json, tokens.css, DESIGN.md e assets/manifest.json>
 
 Descricao:
 <COLAR DESCRICAO DA TASK>
@@ -209,6 +209,7 @@ Design System (Open Design) — CONSUMIR, NAO REINVENTAR:
 - fixtures de componente: <CAMINHO components.html>
 - decisoes/intencao: <CAMINHO design-system.md (modo PRD) | openspec/changes/<nome>/design.md + specs/ui-design-system/spec.md (modo Spec)>
 - preview de referencia (alvo visual): <CAMINHO preview/ (diretorio — ex.: packages/ui/design-systems/<id>/preview/)>
+- assets aprovados: <CAMINHO assets/manifest.json>; copie conforme `materializeInto`, aplique `seedBindings` e nao solicite/sugira/gere imagens
 Regras de design (do skills-protocol do Open Design — obrigatorias):
 - cole o `tokens.css` como base e use as custom properties (`var(--*)`); NAO invente hex/raio/espacamento fora dos tokens;
 - implemente os componentes batendo com os seletores/estados de `components.html` (default/hover/focus/active/disabled/loading/empty/error);
@@ -251,7 +252,7 @@ Regras:
 - se a API vier de DTO C# ou mapper compartilhado, destaque qualquer dependencia de serializacao;
 - use o bridge com `--model <AGY_MODEL>`;
 - quando `agyParallel: yes`, decomponha os entregaveis listados em subtarefas Gemini nativas (`DefineSubagent`/`invoke_subagent`/`ManageSubagents`), execute-as concorrentemente e agregue os resultados; entregaveis dependentes ou que compartilhem estado ficam no subagente principal sem fan-out;
-- o `antigravity-coder` avalia proativamente oportunidades de imagery (hero, banners, ilustracoes de empty/error state, icones de produto/servico) e pode devolver um bloco `IMAGE_SUGGESTIONS` na resposta — **nao gere imagens sem aprovacao**: se o bloco vier, repasse-o integralmente ao orquestrador no item 14 do retorno; o orquestrador (nunca o subagente) apresenta as opcoes ao usuario via `AskUserQuestion` antes de qualquer `--generate-image`;
+- nao solicite, sugira nem gere imagens; todas as decisoes visuais ja foram fechadas pelo Pensador e estao em `assets/manifest.json`;
 - se houver cota, retorne `Status: QUOTA_EXAUSTED`;
 - se houver autenticacao pendente, retorne `Status: AUTH_REQUIRED`;
 - se o `agy` nao existir no PATH do ambiente, retorne `Status: AGY_MISSING`;
@@ -275,21 +276,18 @@ Retorno:
 12. Conversation IDs dos subagentes: <lista | N/A>
 13. Tokens usados: input=<N> output=<N> cache_read=<N> total=<N>
     (informe N/A se a plataforma nao expor o dado)
-14. IMAGE_SUGGESTIONS: <bloco retornado pelo antigravity-coder, verbatim | "N/A (nenhuma oportunidade de imagery identificada)">
+14. ASSET_MATERIALIZATION: <ids materializados + destinos + seedBindings aplicados | N/A>
 ```
 
-### 2a. Tratamento de `IMAGE_SUGGESTIONS` (imagery/icones — pos-retorno da task front-end)
+### 2a. Materializacao de imagery/icones
 
-Se o item 14 do retorno da Secao 2 vier preenchido (nao `N/A`), o orquestrador segue este fluxo **antes de considerar a task concluida**:
+O Orquestrador nunca abre uma rodada de decisao visual. A materializacao acontece na Fase 4 (`references/workflow.md` secao 4.0), atras do gate deterministico `visualMaterialization` — nenhuma task front-end e despachada antes desse gate fechar `DONE`:
 
-1. Apresente cada entrada do bloco ao usuario via `AskUserQuestion` (`multiSelect: true`), um `option` por imagem sugerida (label = `label`, description = `prompt` resumido).
-2. Para cada opcao aprovada, delegue de volta ao `cc-antigravity-plugin:antigravity-coder` (uma chamada por imagem — o bridge nao mistura `--generate-image` com `--parallel`):
-   ```text
-   --generate-image --output-dir <DIR DO label:file DA SUGESTAO> -- "<prompt da sugestao, refinado com sectorContext e paleta do design system>"
-   ```
-3. Apos gerar, confirme que o subagente colou o arquivo gerado no componente correspondente (import/`src`/`background-image`) — imagem gerada e nao referenciada em nenhum componente e uma pendencia, nao uma entrega.
-4. Registre em `report/subagents-context.md`: quais imagens foram sugeridas, quais o usuario aprovou, e o caminho final de cada arquivo gerado.
-5. Se o usuario nao aprovar nenhuma, registre a recusa e siga sem bloquear a task — imagery e um enriquecimento, nao um requisito obrigatorio, exceto quando o PRD/CA explicitamente exigir imagem de produto/servico.
+1. `materialize-visual-handoff.mjs` roda sem `--apply` primeiro; finding alto/critico bloqueia dispatch (o gate nao fecha).
+2. Roda novamente com `--apply` para copiar somente o pacote `resolved` autoritativo e os assets conforme `materializeInto`; a saida vai para `design-materialization.json` e fecha o gate.
+3. Inclua `design-contract.json`, `tokens.css`, `DESIGN.md` e `assets/manifest.json` em `--priority-files`; o prompt AGY final deve ficar abaixo de 24.000 caracteres.
+4. Aplique cada `seedBindings` e registre id, destino e binding no item 14.
+5. Handoff sem `variant` e `legacy-verbatim`: registre degradacao, nao gere assets e aplique gates visuais reforcados.
 
 ## 3. SLOW_CHECKIN
 

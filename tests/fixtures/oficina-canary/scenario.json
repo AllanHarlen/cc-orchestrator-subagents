@@ -1,0 +1,28 @@
+{
+  "id": "oficina-ai-resolved-design-canary",
+  "source": "OficinaAI",
+  "openDesignInput": "incomplete",
+  "expectedPensadorOutcome": "RESOLVED_PASS",
+  "handoffIngestion": "automatic",
+  "routes": [
+    { "route": "/", "surface": "home", "imagesRequired": true },
+    { "route": "/servicos", "surface": "services", "imagesRequired": true },
+    { "route": "/pecas", "surface": "parts", "imagesRequired": true },
+    { "route": "/institucional", "surface": "institutional", "imagesRequired": true },
+    { "route": "/admin/login", "surface": "admin-login", "imagesRequired": false },
+    { "route": "/admin", "surface": "dashboard", "imagesRequired": false }
+  ],
+  "journeys": ["cart", "checkout", "admin-login", "admin-refresh", "protected-deep-link"],
+  "states": ["empty", "error", "loading", "success"],
+  "viewports": ["desktop", "mobile"],
+  "requiredAssertions": {
+    "generatedImagesMaterialized": true,
+    "seedUrlsResolve": true,
+    "brokenImages": 0,
+    "undefinedTokens": 0,
+    "emojiIcons": 0,
+    "silentMockFallback": false,
+    "realApiEvidence": true,
+    "doneOnlyAfterAllGates": true
+  }
+}

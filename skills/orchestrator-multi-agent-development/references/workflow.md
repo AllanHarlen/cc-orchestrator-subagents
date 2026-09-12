@@ -276,14 +276,20 @@ Se uma operacao de descoberta/comparacao exigir loops ou tres ou mais reads/grep
 
 ## Fase 4 - Contratos API/UI e materializacao de design
 
-### 4.0 Materializar arquivos de design (Open Design)
+### 4.0 Materializar arquivos de design (Open Design) — gate `visualMaterialization`
 
-Quando a ingestao trouxe `design-system-files` (ou um `design-system.md` com diretorio verbatim):
+Quando a ingestao trouxe `design-system-files` (ou um `design-system.md` com diretorio verbatim) e ha front-end:
 
-- Copie os arquivos verbatim de cada `<id>` (`.pensador/<slug>-vN/design-systems/<id>/`) para o alvo real indicado em `materializeInto` (ex.: `packages/ui/design-systems/<id>/`, ou `src/styles/…` em app unico). Ver `references/handoff-contract.md` secao 6.
-- Nao reescreva `tokens.css`, `DESIGN.md`, `components.html` nem `preview/`: eles sao consumidos verbatim.
+```bash
+node "${CLAUDE_SKILL_DIR}/scripts/materialize-visual-handoff.mjs" --root "." --handoff "<caminho para o handoff.json do Pensador>" --apply > ".orchestrator/runs/<nome>/design-materialization.json"
+```
+
+- O script preserva `original/` intacto, copia apenas o pacote `resolved/` autoritativo de cada `<id>` para o alvo real (`materializeInto`, ex.: `packages/ui/design-systems/<id>/`, ou `src/styles/…` em app unico — ver `references/handoff-contract.md` secao 6), materializa cada asset e aplica `seedBindings`. Nao reescreva `tokens.css`, `DESIGN.md`, `components.html` nem `preview/`: eles sao consumidos verbatim.
+- Um `status: "BLOCKED"` no JSON gravado significa finding alto/critico no pacote (`resolved/` ausente, asset obrigatorio faltando, hash divergente) — corrija na origem (Pensador) antes de prosseguir; nao contorne despachando mesmo assim.
+- Feche o gate somente apos `status: "PASS"`: `gate --gate visualMaterialization --status DONE --evidence file:design-materialization.json`. **O dispatch de qualquer task front-end (Fase 5) fica bloqueado** (`assertPhaseTransition`) enquanto este gate nao fechar — isso e deliberado: um pacote de design nao materializado so aparecia antes como sintoma indireto e generico no gate visualAudit da Fase 9 (imagens quebradas/ausentes), sem apontar a causa raiz.
 - Guarde os caminhos materializados para carregar no prompt de **toda task front-end** (Fase 5) e para o gate de design da Fase 9.
 - No modo Spec, o design chega em `design.md` + `specs/ui-design-system/spec.md`: use-os como requisito normativo do gate.
+- Quando nao ha front-end (`visualMaterialization` nao e `required`), o gate fica `N/A` automaticamente — nao ha o que materializar.
 
 ### 4.1 Contratos
 
@@ -371,14 +377,14 @@ e um sidecar `<path>.audit.json` com `{ promptChars, limit, degraded, droppedFil
 skipped }`. Preencha os campos "Prompt enviado" e "Contexto degradado" de
 `assets/subagents-context-template.md` a partir desse sidecar.
 
-**Quando `degraded: true`** (o bridge descartou arquivos inline por causa do limite de 28.000 chars
+**Quando `degraded: true`** (o bridge descartou arquivos inline por causa do limite de 24.000 chars
 no Windows), a task **nao conta como executada com contexto completo** — registre em
 `run/monitoring.md` a lista de arquivos descartados (`skipped` com `reason:
 "prompt-overflow-windows"`) e decida entre redespachar com `--priority-files` apontando para os
 arquivos que ficaram de fora, ou dividir a task por entregaveis (ver abaixo). Hoje essa degradacao
 so aparecia como um aviso em stderr que ninguem le; a partir daqui e um fato registrado na run.
 
-### Regra de limite de prompt AGY (28.000 chars)
+### Regra de limite de prompt AGY (24.000 chars)
 
 Antes de delegar, meca o arquivo persistido (nao conte manualmente):
 
@@ -387,14 +393,14 @@ node "${CLAUDE_SKILL_DIR}/scripts/check-prompt-budget.mjs" --agent agy \
   --file ".orchestrator/runs/<slug>/run/prompts/<taskId>.md"
 ```
 
-**Threshold:** 28.000 chars. Prompts reais com aspas, barras invertidas, XML e quebras de linha inflariam ~14% na linha de comando codificada pelo Node.js no Windows, causando `ENAMETOOLONG`. O threshold conservador garante margem segura. Para AGY isso e limite duro: `ok: false` sai com exit 1 e o chamador deve tratar a falha antes de despachar.
+**Threshold:** 24.000 chars. Prompts reais com aspas, barras invertidas, XML e quebras de linha inflam na linha de comando codificada pelo Node.js no Windows. Para AGY isso e limite duro: `ok: false` sai com exit 1 e o chamador deve tratar a falha antes de despachar.
 
 **Para Codex, a mesma checagem (`--agent codex`) e apenas indicativa** (`advisory: true`, nunca
 falha, exit 0 mesmo acima do limite) — a chamada direta ao companion usa `--prompt-file`
 (`codex-companion.mjs`), que nao passa pelo limite de argv do Windows. Um prompt muito acima do
 limite ainda pode indicar contexto mal recortado; considere dividir por entregaveis mesmo sem erro.
 
-Se o prompt montado **exceder 28.000 chars**:
+Se o prompt montado **exceder 24.000 chars**:
 
 1. Identifique os entregaveis listados nos criterios de aceite da task original.
 2. Divida os entregaveis em dois grupos independentes (A e B), priorizando que cada grupo seja coeso e nao dependa do outro para executar.
@@ -402,7 +408,7 @@ Se o prompt montado **exceder 28.000 chars**:
    - **Task `<ID>-a`**: herda todos os metadados da task original (categoria, agente, contrato, stack, escopo); `Descricao` e criterios de aceite cobrem apenas o Grupo A.
    - **Task `<ID>-b`**: mesmo metadados; `Descricao` e criterios de aceite cobrem apenas o Grupo B.
 4. Atualize `plan/tasks-classification.md` e `plan/waves.md` substituindo a task original pelas duas subtasks; mantenha a mesma wave se forem independentes.
-5. Remonte os dois prompts e confirme que cada um esta abaixo de 28.000 chars. Se ainda exceder, repita a divisao.
+5. Remonte os dois prompts e confirme que cada um esta abaixo de 24.000 chars. Se ainda exceder, repita a divisao.
 6. Registre a divisao em `run/monitoring.md` e `report/workflow-log.md` com:
    - task original e motivo (prompt excedeu N chars);
    - subtasks geradas e criterios de aceite de cada uma.
@@ -442,9 +448,9 @@ Cada prompt deve incluir:
 - regra de validar casing JSON e serializacao;
 - `sectorContext` (setor/industria do negocio, do PRD/`design-system.md` do Pensador) — orienta que imagery/iconografia fazem sentido para o produto real.
 
-### Imagery/icones (`IMAGE_SUGGESTIONS`)
+### Imagery/icones — materializacao do handoff
 
-Todo prompt de task front-end usa o template da Secao 2 de `subagent-prompts.md`, que instrui o `antigravity-coder` a devolver um bloco `IMAGE_SUGGESTIONS` quando identificar oportunidades de imagem (hero, banners, ilustracoes de empty/error state, icones de produto/servico) — o `antigravity-coder` **nunca gera sem aprovacao previa**. Quando esse bloco vier preenchido na resposta, siga o fluxo da Secao 2a de `subagent-prompts.md` **antes de fechar a task**: apresente as opcoes ao usuario via `AskUserQuestion` (multiSelect), delegue apenas as aprovadas de volta ao `antigravity-coder` com `--generate-image`, confirme que o arquivo gerado foi fiado no componente, e registre o resultado em `report/subagents-context.md`. Nao marcar a task front-end como `DONE` com sugestoes de imagem pendentes de decisao do usuario.
+O Pensador ja tomou a unica decisao de imagery e publicou `assets/manifest.json`. A materializacao (script, gate `visualMaterialization`, bloqueio de dispatch) ja aconteceu na Fase 4 (secao 4.0) — nenhuma task front-end desta fase deveria estar rodando se aquele gate nao tivesse fechado `DONE`. Nao use `AskUserQuestion` para imagens e nao invoque `--generate-image`. O browser gate (Fase 9, `visualAudit`) comprova imagens nos estados normais, `alt`, ausencia de arquivos quebrados e dados vindos da API real.
 
 ### Verificacao de skills compativeis
 
@@ -727,11 +733,11 @@ Se houver achados bloqueantes em qualquer das fases de review (8 ou 9):
 
 > **Por que esta fase existe.** Review de codigo, `dotnet build`, `npm run build`, `tsc` e `curl` sao **cegos** a uma classe inteira de defeitos de integracao runtime. Em um caso real, tres rodadas de review deram "APROVADO" e a vitrine publica inteira estava quebrada no navegador — porque nenhum review tinha aberto um browser de verdade. Ver a regra 17 do `SKILL.md` para os tres defeitos concretos (CORS ausente, tenant nao resolvido a partir do browser, casing de resposta divergente que falha silenciosamente com 200).
 
-> **Esta fase verifica funcao, nao design.** Ela dirige fluxos de usuario — login, CRUD, checkout — e confirma que o efeito final aconteceu de fato; nao abre uma viewport de celular para medir layout, nao compara uma cor computada contra a paleta do contrato, nao confere se a fonte declarada realmente carrega. Numa run real isso deixou passar uma fonte nunca entregue (renderizava so porque estava instalada na maquina), uma sidebar mobile ocupando 39% da pagina antes do conteudo comecar, e um header sem gutter — os tres invisiveis a build, `curl`, review de codigo **e** a este E2E funcional. Quando o projeto tem Open Design e `cc-testador-subagents` esta instalado, essa conformidade de design em runtime e responsabilidade dele (gate `design-runtime` da Fase 8 do Testador, `lib/runtime-design-probe.mjs`) — nao desta fase.
+> **Esta fase verifica funcao e semantica visual.** Alem dos fluxos, cubra desktop/mobile, compare telas criticas ao preview resolvido, confirme tokens computados, fonte carregada, navegacao, iconografia e assets. Grave `review/ui-evidence.json` e feche o gate `visualAudit`; o validador rejeita commit como evidencia visual e exige screenshot, viewport, requisito, assercao de navegador e prova de API real.
 
 **Quando roda:** sempre que houver task `FRONTEND_ONLY` ou fatia front-end de `FULLSTACK` **e** o front-end for servido como deploy/origem separada do back-end (SPA/Next.js/etc. chamando uma API em outra porta/host). Quando nao ha front-end, ou o front e server-rendered sem chamadas cross-origin, registre "N/A" e siga.
 
-**Excecao: modo conjunto a partir do Pensador com Testador instalado.** Quando a Fase 1 detectou `.pensador/<slug>-vN/handoff.json` (`mode: "joint"`) e `cc-testador-subagents` esta instalado no marketplace do workspace, a verificacao em navegador real e responsabilidade do Testador, nao do Orquestrador — ele e quem vai efetivamente dirigir o navegador no proximo estagio da cadeia. Pule esta fase automaticamente, sem pedir confirmacao:
+**Compatibilidade legada (nao aplicar a runs 4.11+).** A delegacao abaixo existia em runs anteriores. No contrato atual, `browserE2E` e `visualAudit` rodam no Orquestrador e nao podem ser delegados; portanto nao execute estes comandos em runs novas:
 
 ```bash
 node "${CLAUDE_SKILL_DIR}/scripts/orchestration-state.mjs" gate --gate browserE2E \
@@ -747,14 +753,18 @@ Isso **nao e o mesmo** que o "N/A" do paragrafo acima (front-end inexistente ou 
 
 1. **Suba a app de verdade** (ex.: `docker compose up --build`) e confirme os servicos saudaveis. Se subir a stack falhar, isso ja e um achado bloqueante — nao existe "APROVADO" para uma app que nao sobe.
 2. **Credenciais de seed/demo para fluxos autenticados.** Antes de tentar logar, confira se o PRD/spec documenta credenciais conhecidas de seed (ver seção "Observabilidade & Operação" do PRD). Se documentadas, use-as para exercitar os `UC-*` que exigem login. Se o ambiente tem seed/demo mas **nenhuma credencial documentada** (ex.: senha só como hash sem plaintext registrado), isso e uma lacuna real: registre-a explicitamente em `review/e2e-verification.md`, e prefira resolvê-la (redefinir a senha do seed para um valor conhecido e documentá-lo, com uma correção pela Fase 7) a simplesmente pular os fluxos autenticados. Só marque os fluxos autenticados como não verificados se resolver a credencial estiver fora do escopo da correção.
-3. **Dirija os fluxos de usuario criticos** (os `UC-*`/caminhos-felizes da especificacao, **incluindo os que exigem login** quando a credencial estiver disponível) num navegador real via **Playwright MCP** (ou ferramenta equivalente): navegue, preencha formularios, clique, submeta.
+3. **Dirija os fluxos de usuario criticos** em desktop e mobile: home publica; servicos e pecas com imagens; institucional; carrinho/checkout; login administrativo; dashboard; refresh apos login; deep link protegido; estados empty/error/loading/success. Use navegador real via Playwright MCP (ou equivalente).
 4. **Em cada fluxo, verifique:**
    - console e network **sem erros de CORS** nem `net::ERR_FAILED`;
    - cada requisicao de API retorna 2xx **e a UI reflete o dado real** — desconfie de "200 mas a tela ficou vazia/inalterada", que e o sintoma classico de casing divergente ou campo `undefined`;
    - o **efeito final** de cada acao aconteceu de fato (o redirect abriu a aba/rota, o item entrou no carrinho, o registro apareceu na lista, o estado mudou) — nao apenas que a chamada retornou;
    - resolucao **multi-tenant / por host** funciona a partir do browser (o front informa o tenant certo ao back);
    - estados de tela (vazio/carregando/erro/sucesso) se comportam como especificado.
+   - zero imagens quebradas, todo asset requerido visivel no fluxo normal com `alt`, seed apontando para URL real e nenhum emoji usado como icone;
+   - nenhum fallback mock silencioso, erro HTTP mascarado, token CSS indefinido ou valor visual hardcoded fora da allowlist;
+   - consistencia monetaria, sessao preservada no refresh/deep link e navegacao equivalente ao design-contract.
 5. **Capture evidencia**: screenshot e/ou o resumo de console+network dos fluxos exercitados, salvos em `.orchestrator/runs/<slug>/review/e2e-verification.md` (e screenshots em `.orchestrator/runs/<slug>/review/screenshots/`).
+6. Grave `review/ui-evidence.json`, rode `validate-ui-evidence.mjs --evidence <arquivo>` e somente entao feche `gate --gate visualAudit --status DONE --evidence file:review/ui-evidence.json`.
 
 **Achados desta fase sao BLOQUEANTES** como qualquer review: registre em `run/monitoring.md`/`report/workflow-log.md`, crie tasks de correcao, corrija pela Fase 7 e **re-verifique no navegador** antes de aprovar. So depois que os fluxos criticos passarem no navegador o orquestrador pode marcar a entrega como `DONE`. Se a ferramenta de navegador nao estiver disponivel no ambiente, **nao invente aprovacao**: registre a limitacao e marque o `report/handoff.json` como `PARTIAL` com o gap explicito ("verificacao E2E no navegador nao executada").
 

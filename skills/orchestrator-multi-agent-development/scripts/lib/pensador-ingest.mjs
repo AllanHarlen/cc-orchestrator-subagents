@@ -1,5 +1,6 @@
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { join, relative, resolve, sep } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 
 import { validateHandoff } from "./handoff-validator.mjs";
 
@@ -56,6 +57,65 @@ function readHandoffSafe(path) {
     };
   }
   return { handoff: raw, valid: true, version_mismatch: false, errors: [], path };
+}
+
+/** Resolves additive v1 visual handoff fields and marks older entries explicitly. */
+export function inspectVisualHandoff(handoff, handoffPath) {
+  const handoffDir = dirname(handoffPath);
+  const declaredRoot = String(handoff.artifactRoot ?? "").replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/$/, "");
+  const declaredSegments = declaredRoot.split("/").filter(Boolean);
+  const projectRoot = declaredSegments.length > 0
+    ? resolve(handoffDir, ...declaredSegments.map(() => ".."))
+    : resolve(handoffDir, "..", "..");
+  const resolveArtifactRoot = (artifactPath) => {
+    const normalized = String(artifactPath ?? "").replace(/\\/g, "/").replace(/^\.\//, "");
+    if (declaredRoot && (normalized === declaredRoot || normalized.startsWith(`${declaredRoot}/`))) {
+      return resolve(projectRoot, normalized);
+    }
+    return resolve(handoffDir, normalized);
+  };
+  const packages = [];
+  const findings = [];
+  for (const artifact of handoff.artifacts ?? []) {
+    if (artifact?.role !== "design-system-files") continue;
+    const variant = artifact.variant ?? "legacy-verbatim";
+    const packageRoot = resolveArtifactRoot(artifact.path);
+    const priorityFiles = variant === "resolved"
+      ? ["design-contract.json", "tokens.css", "DESIGN.md", artifact.assetsManifest ?? "assets/manifest.json"]
+      : ["tokens.css", "DESIGN.md"];
+    if (variant === "legacy-verbatim") {
+      findings.push({ severity: "warning", code: "LEGACY_VERBATIM_DESIGN", path: artifact.path, message: "Handoff has no variant; reinforced visual gates are required." });
+    } else {
+      if (artifact.authoritative !== true) findings.push({ severity: "high", code: "DESIGN_NOT_AUTHORITATIVE", path: artifact.path });
+      if (artifact.validation?.status !== "PASS") findings.push({ severity: "high", code: "DESIGN_AUDIT_NOT_PASS", path: artifact.path });
+      if (!artifact.materializeInto) findings.push({ severity: "high", code: "MATERIALIZATION_TARGET_MISSING", path: artifact.path });
+    }
+    for (const file of priorityFiles) {
+      if (!existsSync(join(packageRoot, file))) findings.push({ severity: artifact.required === false ? "warning" : "high", code: "VISUAL_ARTIFACT_MISSING", path: `${artifact.path}/${file}` });
+    }
+    let assets = [];
+    const manifestPath = join(packageRoot, artifact.assetsManifest ?? "assets/manifest.json");
+    if (existsSync(manifestPath)) {
+      try { assets = JSON.parse(readFileSync(manifestPath, "utf8")).assets ?? []; }
+      catch { findings.push({ severity: "high", code: "ASSET_MANIFEST_INVALID", path: manifestPath }); }
+    }
+    for (const asset of assets) {
+      const source = join(packageRoot, "assets", asset.file ?? "");
+      if (asset.classification === "required" && !existsSync(source)) findings.push({ severity: "critical", code: "REQUIRED_ASSET_MISSING", path: source, assetId: asset.id });
+      if (asset.classification === "required" && (!asset.alt || !asset.routes?.length || !asset.materializeInto || !asset.seedBindings?.length || !asset.sha256)) findings.push({ severity: "high", code: "ASSET_BINDING_INCOMPLETE", assetId: asset.id });
+      if (existsSync(source) && asset.sha256) {
+        const actual = createHash("sha256").update(readFileSync(source)).digest("hex");
+        if (actual !== asset.sha256) findings.push({ severity: "critical", code: "ASSET_HASH_MISMATCH", assetId: asset.id, path: source });
+      }
+    }
+    packages.push({ variant, authoritative: artifact.authoritative === true, packageRoot, materializeInto: artifact.materializeInto, priorityFiles, assets });
+  }
+  return {
+    packages,
+    findings,
+    blocking: findings.some((item) => ["critical", "high"].includes(item.severity)),
+    degraded: findings.some((item) => item.code === "LEGACY_VERBATIM_DESIGN"),
+  };
 }
 
 /** Parses a `.pensador/` entry name as `<slug>-vN`, or null if it doesn't match. */
@@ -170,6 +230,7 @@ export function ingestPensadorHandoff(options = {}) {
 
   const handoffRead = readHandoffSafe(handoffPath);
   if (handoffRead?.valid) {
+    const visualPackage = inspectVisualHandoff(handoffRead.handoff, handoffPath);
     return {
       mode: "joint",
       slug: chosen.slug,
@@ -178,6 +239,7 @@ export function ingestPensadorHandoff(options = {}) {
       pensadorHandoffPath: handoffPath,
       legacyProgress: null,
       warning: null,
+      visualPackage,
     };
   }
 

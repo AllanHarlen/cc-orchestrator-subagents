@@ -19,6 +19,24 @@
     "startedAt": { "type": ["string", "null"], "format": "date-time" },
     "completedAt": { "type": ["string", "null"], "format": "date-time" },
     "durationMs": { "type": ["integer", "null"], "minimum": 0 },
+    "activeDurationMs": { "type": ["integer", "null"], "minimum": 0 },
+    "queueDurationMs": { "type": ["integer", "null"], "minimum": 0 },
+    "userWaitDurationMs": { "type": ["integer", "null"], "minimum": 0 },
+    "sessionId": { "type": ["string", "null"], "maxLength": 512 },
+    "conversationId": { "type": ["string", "null"], "maxLength": 512 },
+    "usageMissingExecutor": { "type": ["string", "null"], "maxLength": 512 },
+    "usage": {
+      "type": ["object", "null"],
+      "properties": {
+        "inputTokens": { "type": "integer", "minimum": 0 },
+        "outputTokens": { "type": "integer", "minimum": 0 },
+        "cacheCreationTokens": { "type": "integer", "minimum": 0 },
+        "cacheReadTokens": { "type": "integer", "minimum": 0 },
+        "totalProcessedTokens": { "type": "integer", "minimum": 0 },
+        "totalTokens": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
     "result": { "type": ["string", "null"] },
     "reasonCode": { "type": ["string", "null"] },
     "errorFingerprint": { "type": ["string", "null"] },

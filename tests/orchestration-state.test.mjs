@@ -100,14 +100,29 @@ function completeRun(root, artifactDir) {
   ]) {
     writeFileSync(join(artifactDir, name), name === "handoff.json" ? "{}\n" : `# ${name}\n`, "utf8");
   }
+  writeFileSync(join(artifactDir, "desktop.png"), "desktop", "utf8");
+  writeFileSync(join(artifactDir, "mobile.png"), "mobile", "utf8");
+  writeFileSync(join(artifactDir, "ui-evidence.json"), JSON.stringify({
+    routes: [{
+      route: "/", requirementRef: "RF-001", browserAssertion: "critical UI renders with API data",
+      apiEvidence: { real: true, endpoint: "/api/home" },
+      viewports: [{ kind: "desktop", screenshot: "desktop.png" }, { kind: "mobile", screenshot: "mobile.png" }],
+    }],
+    gates: {}, reviews: [],
+  }), "utf8");
+  writeFileSync(join(artifactDir, "design-materialization.json"), JSON.stringify({
+    status: "PASS", applied: true, degraded: false, findings: [], operations: [],
+  }), "utf8");
   // GATE_MONITORING_REQUIRES_SWEEP: fechar o gate monitoring exige que o
   // sweep de stall tenha rodado ao menos uma vez (lifecycle.lastSweepAt).
   sweepStalledTasks(artifactDir, { projectRoot: root });
   for (const gateId of [
     "monitoring",
+    "visualMaterialization",
     "backendReview",
     "frontendReview",
     "browserE2E",
+    "visualAudit",
     "reports",
     "handoff",
     "delivery",
@@ -142,7 +157,7 @@ function cleanup() {
 
 test.afterEach(cleanup);
 
-test("browser E2E applicability can be waived explicitly without weakening fixed gates", () => {
+test("browser E2E and fixed gates cannot be waived", () => {
   const { root, artifactDir } = fixture({ slug: "gate-applicability" });
   initRun({
     projectRoot: root,
@@ -159,15 +174,64 @@ test("browser E2E applicability can be waived explicitly without weakening fixed
     (error) => error instanceof OrchestrationStateError &&
       error.code === "REQUIRED_GATE_CANNOT_BE_SKIPPED",
   );
-  const waived = updateCompletionGate(artifactDir, "browserE2E", "N/A", {
+  assert.throws(
+    () => updateCompletionGate(artifactDir, "browserE2E", "N/A", {
+      projectRoot: root,
+      reason: "attempted E2E waiver",
+    }),
+    (error) => error instanceof OrchestrationStateError && error.code === "REQUIRED_GATE_CANNOT_BE_SKIPPED",
+  );
+});
+
+test("visualMaterialization is required whenever a FRONTEND_ONLY/FULLSTACK task exists, and DONE requires a PASS design-materialization.json", () => {
+  const { root, artifactDir } = fixture({ slug: "visual-materialization" });
+  initRun({
     projectRoot: root,
-    reason: "front and back share the same origin and no browser integration gate applies",
+    artifactDir,
+    slug: "visual-materialization",
+    runId: "visual-materialization-001",
   });
-  assert.equal(waived.gate.required, false);
-  assert.equal(waived.gate.requiredOverride, false);
-  assert.equal(waived.gate.status, "N/A");
-  syncRunFromArtifacts(artifactDir, { projectRoot: root });
-  assert.equal(loadRun(artifactDir).state.completionGates.browserE2E.required, false);
+  assert.equal(loadRun(artifactDir).state.completionGates.visualMaterialization.required, true);
+
+  assert.throws(
+    () => updateCompletionGate(artifactDir, "visualMaterialization", "DONE", {
+      projectRoot: root,
+      evidence: ["test:visualMaterialization:DONE"],
+    }),
+    (error) => error instanceof OrchestrationStateError && error.code === "DESIGN_MATERIALIZATION_MISSING",
+    "closing DONE with no design-materialization.json at all must fail",
+  );
+
+  writeFileSync(join(artifactDir, "design-materialization.json"), "{not valid json", "utf8");
+  assert.throws(
+    () => updateCompletionGate(artifactDir, "visualMaterialization", "DONE", {
+      projectRoot: root,
+      evidence: ["test:visualMaterialization:DONE"],
+    }),
+    (error) => error instanceof OrchestrationStateError && error.code === "DESIGN_MATERIALIZATION_INVALID",
+    "a malformed design-materialization.json must fail, not silently pass",
+  );
+
+  writeFileSync(join(artifactDir, "design-materialization.json"), JSON.stringify({
+    status: "BLOCKED", applied: false, findings: [{ severity: "critical", code: "REQUIRED_ASSET_MISSING" }],
+  }), "utf8");
+  assert.throws(
+    () => updateCompletionGate(artifactDir, "visualMaterialization", "DONE", {
+      projectRoot: root,
+      evidence: ["test:visualMaterialization:DONE"],
+    }),
+    (error) => error instanceof OrchestrationStateError && error.code === "DESIGN_MATERIALIZATION_BLOCKED",
+    "a BLOCKED materialization report must not be allowed to close the gate DONE",
+  );
+
+  writeFileSync(join(artifactDir, "design-materialization.json"), JSON.stringify({
+    status: "PASS", applied: true, findings: [], operations: [],
+  }), "utf8");
+  const closed = updateCompletionGate(artifactDir, "visualMaterialization", "DONE", {
+    projectRoot: root,
+    evidence: ["test:visualMaterialization:DONE"],
+  });
+  assert.equal(closed.state.completionGates.visualMaterialization.status, "DONE");
 });
 
 test("initialization creates a valid snapshot and write-ahead event log", () => {

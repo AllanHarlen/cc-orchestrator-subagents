@@ -388,7 +388,8 @@ test("AGY adapter preserves structured bridge 4.0 metadata and validates retry d
     inputTokens: 120,
     outputTokens: 30,
     cacheReadTokens: 10,
-    totalTokens: 150,
+    totalProcessedTokens: 160,
+    totalTokens: 160,
   });
   assert.equal(probe.durationSeconds, 12.5);
   assert.equal(probe.numTurns, 3);

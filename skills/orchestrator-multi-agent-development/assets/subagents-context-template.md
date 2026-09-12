@@ -63,7 +63,7 @@
 - **Evidence IDs / executor-results:** `<lista>` / `<paths persistidos antes do consumo>`
 - **Pendências reportadas:** `<nenhuma | lista>`
 - **Riscos reportados:** `<nenhum | lista>`
-- **Imagery sugerida (`IMAGE_SUGGESTIONS`):** `<N/A | lista: label, arquivo, aprovado(usuário)? sim/não, gerado? sim/não, fiada no componente? sim/não>`
+- **Assets materializados:** `<N/A | lista: id, origem, destino, seedBindings, exibido em rota/slot?>`
 - **Evidência operacional:** `<mensagem curta quando houve falha/cota/bloqueio>`
 - **Limites de sandbox Codex:** `<N/A | nenhum | rede externa bloqueada | pacote ausente no cache | escrita fora do working directory>`
 - **Ação do orquestrador:** `<integrado | redelegado | contrato ajustado | decisão do usuário | pendente>`

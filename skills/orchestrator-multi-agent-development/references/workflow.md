@@ -328,6 +328,19 @@ Quando houver DTO C# e consumidor TypeScript:
 - documente serializer global ou atributos por campo;
 - nao aceite "bate com a interface" sem verificar o payload real.
 
+### 4.2 Geracao deterministica de tipos e contratos
+
+A partir da especificacao OpenAPI/YAML/JSON ou dos contratos em `.orchestrator/runs/<nome>/contracts/`, gere tipos e DTOs fortemente tipados para a stack do projeto antes de despachar os subagentes:
+
+```bash
+node "${CLAUDE_SKILL_DIR}/scripts/generate-contract-types.mjs" \
+  --contract ".orchestrator/runs/<nome>/contracts/<id>.md" \
+  --lang auto \
+  --output "<workspace>/contracts"
+```
+
+Isso elimina alucinacoes de payload, divergencias de casing e interfaces inventadas pelos subagentes no back-end e front-end.
+
 ## Fase 5 - Delegacao paralela
 
 Antes de lancar subagentes, confirme que `validate-routing.mjs` passou e que o plano de worktrees da wave nao possui overlap sendo despachado em paralelo. A delegacao precisa seguir `assignedAgent` dos artefatos validados.
@@ -543,10 +556,11 @@ Grava `conversationId`/`sessionId`, `resolvedModel`, `codexEffort` efetivo, `sta
   - aumente timeout, reduza escopo ou quebre a task antes de insistir.
 
 - `QUOTA_EXHAUSTED` no Codex durante implementacao, ajuste pontual ou handoff:
-  - nao tente trocar modelo fixo;
-  - marque `BLOCKED`;
-  - registre evidencia;
-  - peca decisao ao usuario.
+  - O fallback de implementacao de back-end delega exclusivamente para o AGY (`cc-antigravity-plugin:antigravity-coder`) com modelos Gemini nativos:
+    - `gemini-3.8-flash-medium` para tarefas pontuais/CRUDs, migrations simples, seeds e ajustes isolados;
+    - `gemini-3.8-flash-high` para tarefas de arquitetura, seguranca ou refatoracao complexa.
+  - **NUNCA** fazer fallback para modelos Claude ou subagentes `claude-code`, preservando estritamente a cota da sessao principal e evitando sobrecarga/custo no orquestrador.
+  - Registre o motivo do fallback e os identificadores em `run/monitoring.md` e `report/workflow-log.md`.
 
 - `QUOTA_EXHAUSTED` no Codex durante review back-end:
   - faca review interno read-only no orquestrador;
@@ -576,6 +590,26 @@ Grava `conversationId`/`sessionId`, `resolvedModel`, `codexEffort` efetivo, `sta
 - Para UI sem dependencia de rede, mantenha AGY como executor primario. So faca handoff para Codex se o bloqueio AGY estiver documentado e o sandbox Codex permitir a escrita necessaria.
 
 ## Fase 7 - Integracao
+
+### 7.0 Early Stack Boot / Smoke Test de Infra (Wave 1)
+
+Antes de disparar a Wave 1 ou logo na inicializacao das primeiras tarefas de infraestrutura/servicos, execute o smoke test precoce da stack:
+
+```bash
+node "${CLAUDE_SKILL_DIR}/scripts/smoke-test-infra.mjs" --root "." [--compose docker-compose.yml] [--timeout 120]
+```
+
+Isso sobe os containers de banco de dados, queues e dependencias essenciais em menos de 2 minutos para confirmar que portas, credenciais e volumes funcionam de verdade. Se a infra falhar aqui, o orquestrador interrompe o processo imediatamente em vez de acumular horas de execucao para falhar na Fase 9.5.
+
+### 7.1 Gate de Qualidade Incremental por Onda (Wave Gate)
+
+Ao final de cada wave (antes de autorizar a transicao para a wave seguinte), execute o gate deterministico de qualidade:
+
+```bash
+node "${CLAUDE_SKILL_DIR}/scripts/run-wave-gate.mjs" --wave <N> --dir ".orchestrator/runs/<nome>"
+```
+
+O script roda localmente compilacao (`build`), typecheck e verificacao de escopo alterado (`git diff`), sem consumir tokens de LLM. Nenhuma wave avancara se a wave anterior tiver deixado erros de build ou tipagem acumulados.
 
 Para cada worktree isolada concluida, marque `ready` (commit recuperavel) e integre serialmente na branch de integracao. O root produtivo deve estar limpo fora dos metadados do orquestrador. Em conflito, persista `CONFLICT` e pare; nao aborte, escolha lado ou limpe a worktree silenciosamente.
 
@@ -610,7 +644,16 @@ node "${CLAUDE_SKILL_DIR}/scripts/orchestration-telemetry.mjs" project --dir ".o
 
 Nao gere projeto de testes automatizados como parte da integracao. A validacao de que cada requisito (`RF`/`CA`) foi implementado corretamente e responsabilidade do review de codigo (Fases 8 e 9), nao de uma suite de testes.
 
-**Monte a matriz de rastreabilidade RF/CA → evidência aqui, nao no relatorio final.** Percorra cada `RF`/`CA` do escopo da especificacao e registre, em `report/implementation-report.md` secao 13, a task que o implementou e o arquivo/trecho de evidencia. Um `RF` sem entrega correspondente (ou com `// TODO`/placeholder/stub no caminho do requisito) e uma lacuna que precisa ser **sinalizada agora** — nao silenciosamente absorvida como "lacuna conhecida" no relatorio final sem passar pelo gate de review. Essa matriz alimenta diretamente as Fases 8 e 9.
+**Monte a matriz de rastreabilidade RF/CA → evidência aqui, nao no relatorio final.** Para preencher a Secao 13 do `report/implementation-report.md` de forma deterministica sem consumir tokens de LLM nem context window, execute:
+
+```bash
+node "${CLAUDE_SKILL_DIR}/scripts/build-traceability-matrix.mjs" \
+  --requirements ".pensador/<slug>-vN/requirements.json" \
+  --tasks ".orchestrator/runs/<nome>/plan/tasks-classification.md" \
+  --output ".orchestrator/runs/<nome>/report/traceability-matrix.md"
+```
+
+O resultado gerado e inserido na secao 13. Um `RF` sem entrega correspondente (ou com `// TODO`/placeholder/stub no caminho do requisito) e uma lacuna que precisa ser **sinalizada agora** — nao silenciosamente absorvida como "lacuna conhecida" no relatorio final sem passar pelo gate de review. Essa matriz alimenta diretamente as Fases 8 e 9.
 
 **Gate deterministico de cobertura RF/CA.** A matriz acima e prosa, montada pelo mesmo agente que escreveu o codigo — sozinha, ela nao pega um `RF` que a Fase 1.2 perdeu ao extrair tasks. Quando o handoff do Pensador trouxe `requirements-index` (role `requirements-index`, `requirements.json`, modo PRD), rode o gate deterministico antes de fechar esta fase:
 

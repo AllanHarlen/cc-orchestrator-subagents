@@ -1,5 +1,21 @@
 # Changelog
 
+## [4.13.0] — 2026-09-12
+
+- Novas ferramentas determinísticas de aceleração de execução:
+  - `generate-contract-types.mjs`: geração fortemente tipada de DTOs e interfaces a partir de OpenAPI/YAML/JSON na Fase 4, prevenindo alucinações de payload e divergências de casing.
+  - `smoke-test-infra.mjs`: early stack boot de Docker Compose na Wave 1 (Fase 7), validando portas, volumes e dependências em 2 minutos para falhar rápido.
+  - `run-wave-gate.mjs`: gate de qualidade incremental por onda (0 tokens LLM) verificando build, typecheck, linting de tokens e integridade de escopo antes de autorizar a próxima onda.
+  - `build-traceability-matrix.mjs`: geração automática e determinística da matriz de rastreabilidade (RF/CA para tasks e commits) para a Seção 13 do relatório de implementação.
+- Roteamento e política de cota:
+  - Fallback de implementação back-end em caso de `QUOTA_EXHAUSTED` no Codex passa a delegar exclusivamente para o AGY (`cc-antigravity-plugin:antigravity-coder`) com modelos Gemini (`gemini-3.8-flash-medium` para tarefas pontuais/CRUDs e `gemini-3.8-flash-high` para arquitetura/segurança).
+  - Proibição estrita de delegar fallback de implementação para modelos Claude ou subagentes `claude-code`, preservando a cota da sessão principal.
+  - Calibração de esforço formalizada: `--effort high` restrito a arquitetura central e reviews; `--effort medium`/`low` para tarefas isoladas e CRUDs.
+- Prompts normativos:
+  - Auto-verificação local obrigatória antes de reportar `DONE` (<BUILD_CMD> e <TEST_CMD> com exit code 0) adicionada aos templates de prompt do Codex e do AGY.
+  - Reforço do consumo de contratos tipados e shift-left do design system (`components.html` / `tokens.css`).
+- Suíte de testes: adicionados 8 testes automatizados em `tests/execution-acceleration-tools.test.mjs` (total de 394 testes verdes).
+
 ## [4.12.0] — 2026-09-12
 
 - Ingestão visual e inspeção de handoff (`inspectVisualHandoff`): estendido para coletar e validar formalmente os artefatos visuais emitidos pelo Pensador: `ui-prototype` (`prototypes/` com protótipos HTML estáticos/interativos de discovery) e `brand-assets` (`assets/` com `assets/manifest.json` contendo ativos reais de mídia, logos e banners).

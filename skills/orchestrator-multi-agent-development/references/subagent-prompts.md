@@ -15,6 +15,8 @@ Sempre leia este arquivo antes de delegar para Codex ou Antigravity/AGY.
 - Se o sinal aplicavel indicar disponibilidade para Codebase Memory, use `search_graph`/`trace_path`/`get_code_snippet` para localizar o simbolo, quem o chama e quem ele chama, antes de varrer arquivos com Read/Glob/Grep. Grafo e pista, nao prova: confirme por leitura do arquivo antes de alterar comportamento. Se o grafo nao cobrir o arquivo, ou a consulta falhar, leia o arquivo diretamente. Fique dentro do escopo permitido mesmo que o grafo aponte para fora dele.
 - Se existir contrato API/UI, siga o contrato como fonte da verdade.
 - Valide casing JSON e wire format real; nao assuma que nomes de DTO internos sao iguais ao payload na rede.
+- Auto-verificação local obrigatoria antes de reportar DONE: todo subagente DEVE executar o build/compilacao e a verificacao/testes locais da sua fatia no seu workspace ou worktree (`<BUILD_CMD>` e `<TEST_CMD>`). Qualquer erro de compilacao, sintaxe, tipagem ou lint DEVE ser corrigido antes de encerrar. So retorne `Status: DONE` se a verificacao concluir com exit code 0.
+- Roteamento de Fallback de Back-End: Quando o Codex esgotar cota (`QUOTA_EXHAUSTED`), o fallback de implementacao de back-end delega exclusivamente para o AGY (`cc-antigravity-plugin:antigravity-coder`) com modelos Gemini (`gemini-3.8-flash-medium` para tarefas pontuais/CRUDs e `gemini-3.8-flash-high` para tarefas de arquitetura/seguranca), NUNCA para modelos Claude ou subagentes `claude-code`, preservando a cota da sessao principal.
 - No Codex, trate rede externa bloqueada para pacotes/restore, pacote ausente do cache local e erro de escrita fora do working directory permitido como `Status: BLOCKED`.
 
 ## 1. Back-end - Codex
@@ -107,9 +109,11 @@ Regras:
 - preserve padroes locais;
 - nao altere contrato sem sinalizar;
 - valide wire format real, especialmente casing JSON;
+- se houver contratos tipados gerados em `contracts/` (via `generate-contract-types.mjs`), importe e siga estritamente os DTOs e assinaturas gerados;
 - se houver DTO C# em PascalCase e payload esperado em camelCase, confirme serializer/atributos e registre a decisao;
 - valide serializacao real contra o TypeScript consumidor quando houver fronteira front-back;
 - nao crie projeto/suite de testes automatizados como entregavel desta task — a validacao de cada `RF`/`CA` acontece no review de codigo (Fase 8), nao numa suite gerada por voce;
+- auto-verificacao local obrigatoria antes de reportar DONE: execute o build e testes locais da sua fatia no seu workspace/worktree (`<BUILD_CMD>` e `<TEST_CMD>`); corrija qualquer erro de compilacao, tipagem ou sintaxe antes de devolver; retorne `Status: DONE` apenas se os comandos terminarem com exit code 0;
 - reporte todos os arquivos alterados;
 - se houver cota, retorne `Status: QUOTA_EXHAUSTED`;
 - se `dotnet restore`, `dotnet add package`, npm, pip ou outro registry falhar por rede externa bloqueada ou pacote ausente do cache local, retorne `Status: BLOCKED` com o comando, pacote e erro;
@@ -255,6 +259,9 @@ Regras:
 - use o bridge com `--model <AGY_MODEL>`;
 - quando `agyParallel: yes`, decomponha os entregaveis listados em subtarefas Gemini nativas (`DefineSubagent`/`invoke_subagent`/`ManageSubagents`), execute-as concorrentemente e agregue os resultados; entregaveis dependentes ou que compartilhem estado ficam no subagente principal sem fan-out;
 - nao solicite, sugira nem gere imagens; todas as decisoes visuais ja foram fechadas pelo Pensador e estao em `assets/manifest.json`;
+- Shift-Left do Design System (consumir, nunca reinventar): quando `components.html` e `tokens.css` existirem, transpile os componentes HTML/CSS diretamente para a stack do projeto (React/Vue/etc.). NUNCA invente design, hierarquia, espacamentos ou layout do zero, e NUNCA use cores hexadecimais hardcoded fora dos tokens (`var(--*)`);
+- quando houver contratos tipados gerados em `contracts/` (via `generate-contract-types.mjs`), importe e consuma estritamente as interfaces TypeScript geradas;
+- auto-verificacao local obrigatoria antes de reportar DONE: execute a compilacao, typecheck e lint da sua fatia no seu workspace/worktree (`<BUILD_CMD>` / `npm run build` / `npx tsc --noEmit` / `npm run lint`); corrija qualquer erro de tipagem ou compilacao antes de finalizar; so retorne `Status: DONE` com exit code 0;
 - se houver cota, retorne `Status: QUOTA_EXAUSTED`;
 - se houver autenticacao pendente, retorne `Status: AUTH_REQUIRED`;
 - se o `agy` nao existir no PATH do ambiente, retorne `Status: AGY_MISSING`;
@@ -453,9 +460,11 @@ Se houver rede externa bloqueada, pacote ausente no cache local ou escrita fora 
 
 > Ajustes pontuais de front-end voltam para o AGY (`cc-antigravity-plugin:antigravity-coder`) com `--model <agyModel>`, nao para o Codex. `antigravity-agent` e somente leitura e nao pode aplicar ajustes.
 
-## 7. Fallback de review sem agente disponivel
+## 7. Fallback operacional e de cota
 
-- Review back-end com Codex em `QUOTA_EXHAUSTED`: o orquestrador faz review interno read-only, salva em `review/review-final.md` e deixa claro que foi fallback do orquestrador.
-- Review front-end com AGY em `QUOTA_EXAUSTED`/`AUTH_REQUIRED`/`AGY_MISSING`/`TIMEOUT`: o orquestrador faz review interno read-only, salva em `review/review-frontend.md` e deixa claro que foi fallback do orquestrador.
+- **Implementacao back-end com Codex em `QUOTA_EXHAUSTED`**: o fallback de implementacao delega exclusivamente para o AGY (`cc-antigravity-plugin:antigravity-coder`) com modelos Gemini nativos (`gemini-3.8-flash-medium` para tarefas pontuais/CRUDs/seeds e `gemini-3.8-flash-high` para arquitetura/seguranca). **NUNCA** delegar para modelos Claude ou subagentes `claude-code`, preservando a cota da sessao principal.
+- **Review back-end com Codex em `QUOTA_EXHAUSTED`**: o orquestrador faz review interno read-only, salva em `review/review-final.md` e deixa claro que foi fallback do orquestrador.
+- **Review front-end com AGY em `QUOTA_EXAUSTED`/`AUTH_REQUIRED`/`AGY_MISSING`/`TIMEOUT`**: o orquestrador faz review interno read-only, salva em `review/review-frontend.md` e deixa claro que foi fallback do orquestrador.
+- **Implementacao front-end com AGY em `QUOTA_EXAUSTED`**: seguir a politica de fallback descrita em `workflow.md`.
 
-Em nenhum caso o orquestrador redelega implementacao por conta propria nem troca modelo a esmo.
+Em nenhum caso o orquestrador troca modelo a esmo ou utiliza Claude para fatias de implementacao de outros agentes.

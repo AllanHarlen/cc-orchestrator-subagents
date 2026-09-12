@@ -43,7 +43,7 @@ Passe sempre `--model <papel>` — Codex tem **tres papeis fixos de modelo**, nu
 - `gpt-5.6-terra` — implementacao geral (`BACKEND_ONLY`, `DATABASE_ONLY`, `DOCS_ONLY`, fatia back-end de `FULLSTACK`);
 - `gpt-5.6-luna` — correcao originada da Fase 9.5 (browser-e2e) ou de review `REPROVADO`.
 
-`--effort <low|medium|high>` e sempre derivado da complexidade/risco da task na classificacao — tipicamente `medium` para implementacao/ajustes/handoffs, `high` para review. Nunca fixe `--effort` sem olhar a task, e nunca omita `--model`: sem ele o Codex cai no default de conta do usuario, que pode ser o modelo de review fazendo implementacao.
+`--effort <low|medium|high>` e sempre derivado da complexidade/risco da task na classificacao — utilize `low` ou `medium` para CRUDs, migrations simples, seeds e tarefas pontuais/isoladas, reservando `high` estritamente para arquitetura central, refatoracoes criticas e reviews (Fase 8 e 9). Nunca fixe `--effort high` arbitrariamente para tasks simples e nunca omita `--model`: sem ele o Codex cai no default de conta do usuario, que pode ser o modelo de review fazendo implementacao.
 
 Codex revisa apenas back-end. O review de front-end e sempre do AGY com `--read-only --format json --model pro-high --effort high`.
 
@@ -97,6 +97,19 @@ Sempre com `--effort high`.
 
 ### Codex `gpt-5.6-luna` (papel fix)
 
+
+### Codex `gpt-5.6-sol` (papel review)
+
+Use para:
+
+- review back-end pos-implementacao;
+- leitura critica de risco arquitetural no back-end;
+- analise de regressao e seguranca no back-end.
+
+Sempre com `--effort high`.
+
+### Codex `gpt-5.6-luna` (papel fix)
+
 Use exclusivamente para correcao originada de um achado — Fase 9.5 (browser-e2e) ou review `REPROVADO` — nunca para uma task de implementacao vinda do plano original. `--effort` derivado da severidade do achado.
 
 ### AGY `pro-high` (review front-end)
@@ -105,10 +118,15 @@ Use para o review front-end pos-implementacao (Fase 9), em modo read-only. O AGY
 
 ## Politica de quota
 
-- `QUOTA_EXHAUSTED` em implementacao Codex: bloquear e pedir decisao ao usuario.
+- `QUOTA_EXHAUSTED` em implementacao Codex (Back-End):
+  - O fallback de implementacao de back-end delega exclusivamente para o AGY (`cc-antigravity-plugin:antigravity-coder`) com modelos Gemini nativos:
+    - `gemini-3.8-flash-medium` para tarefas pontuais/CRUDs, migrations simples, seeds e ajustes isolados;
+    - `gemini-3.8-flash-high` para tarefas de arquitetura, seguranca ou refatoracao complexa.
+  - **NUNCA** fazer fallback para modelos Claude ou subagentes `claude-code`, preservando estritamente a cota da sessao principal e evitando sobrecarga/custo no orquestrador.
+  - Registre o motivo do fallback e os identificadores em `run/monitoring.md` e `report/workflow-log.md`.
 - `QUOTA_EXHAUSTED` em review back-end Codex: fazer fallback de review interno read-only do orquestrador e salvar em `review/review-final.md`.
 - `QUOTA_EXAUSTED`/`AUTH_REQUIRED`/`AGY_MISSING`/`TIMEOUT` no review front-end AGY: fazer fallback de review interno read-only do orquestrador e salvar em `review/review-frontend.md`.
-- `QUOTA_EXAUSTED` em implementacao Antigravity/AGY: seguir a politica de fallback descrita em `workflow.md`.
+- `QUOTA_EXHAUSTED` em implementacao Antigravity/AGY: seguir a politica de fallback descrita em `workflow.md`.
 - `AUTH_REQUIRED`, `AGY_MISSING` e `TIMEOUT` em Antigravity/AGY: tratar como bloqueios operacionais e registrar evidencia.
 
 ## Politica de sandbox

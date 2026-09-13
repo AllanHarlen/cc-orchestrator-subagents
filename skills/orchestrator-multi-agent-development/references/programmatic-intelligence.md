@@ -20,7 +20,7 @@ Scripts disponíveis:
 | `validate-task-scope.mjs` | arquivos alterados × allowed paths/shared scope |
 | `collect-test-results.mjs` | JUnit/TRX/JSON/texto em resumo único |
 | `reconcile-run.mjs` | resume/reconcile + integridade condensada |
-| `check-prompt-budget.mjs` | tamanho do prompt persistido contra o limite de 24.000 chars antes de delegar — duro para `--agent agy`, indicativo para `--agent codex` |
+| `check-prompt-budget.mjs` | tamanho do prompt persistido contra o orcamento indicativo de 24.000 chars antes de delegar — sempre indicativo (`--agent agy` ou `--agent codex`), nunca bloqueia; `ok: false` e sinal para revisar o recorte da task |
 
 Todos:
 

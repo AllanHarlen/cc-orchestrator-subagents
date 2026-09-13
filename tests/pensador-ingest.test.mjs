@@ -317,3 +317,58 @@ test("inspectVisualHandoff and ingestPensadorHandoff collect and expose ui-proto
   assert.equal(ingested.visualPackage.brandAssets[0].manifestExists, true);
 });
 
+// A real run (OficinaAI, 2026-09-12) had a status: DONE handoff with
+// design-system-files.variant "legacy-verbatim" (the DESIGN stage was
+// skipped) treated as a mere warning here, so materialize-visual-handoff.mjs
+// applied an unfinished design package instead of blocking Fase 4.0 as
+// workflow.md already documents ("corrija na origem antes de prosseguir").
+// cc-pensador >= 2.25.0 now refuses to emit DONE this way, so a DONE handoff
+// with legacy-verbatim reaching this point means a stale producer version —
+// defense in depth, not the primary fix.
+test("inspectVisualHandoff: legacy-verbatim design on a status DONE handoff is blocking (high), not a warning", () => {
+  const root = fixture();
+  const handoffDir = join(root, ".pensador/app-v1");
+  mkdirSync(join(handoffDir, "design-systems/bmw"), { recursive: true });
+  writeFileSync(join(handoffDir, "design-systems/bmw/tokens.css"), ":root{}", "utf8");
+  writeFileSync(join(handoffDir, "design-systems/bmw/DESIGN.md"), "# Design", "utf8");
+
+  const handoff = {
+    ...baseHandoff("app", "DONE"),
+    artifacts: [
+      { role: "design-system-files", path: "design-systems/bmw", required: true, variant: "legacy-verbatim" },
+    ],
+  };
+  const handoffPath = join(handoffDir, "handoff.json");
+  writeJson(handoffPath, handoff);
+
+  const visual = inspectVisualHandoff(handoff, handoffPath);
+  const finding = visual.findings.find((f) => f.code === "LEGACY_VERBATIM_DESIGN");
+  assert.ok(finding, "expected a LEGACY_VERBATIM_DESIGN finding");
+  assert.equal(finding.severity, "high");
+  assert.equal(visual.blocking, true);
+});
+
+test("inspectVisualHandoff: legacy-verbatim design on a status PARTIAL handoff stays a warning (already disclosed via summary)", () => {
+  const root = fixture();
+  const handoffDir = join(root, ".pensador/app-v1");
+  mkdirSync(join(handoffDir, "design-systems/bmw"), { recursive: true });
+  writeFileSync(join(handoffDir, "design-systems/bmw/tokens.css"), ":root{}", "utf8");
+  writeFileSync(join(handoffDir, "design-systems/bmw/DESIGN.md"), "# Design", "utf8");
+
+  const handoff = {
+    ...baseHandoff("app", "PARTIAL"),
+    summary: "Pipeline v2.23 (prototipos/assets/auditoria) nao executado nesta rodada.",
+    artifacts: [
+      { role: "design-system-files", path: "design-systems/bmw", required: true, variant: "legacy-verbatim" },
+    ],
+  };
+  const handoffPath = join(handoffDir, "handoff.json");
+  writeJson(handoffPath, handoff);
+
+  const visual = inspectVisualHandoff(handoff, handoffPath);
+  const finding = visual.findings.find((f) => f.code === "LEGACY_VERBATIM_DESIGN");
+  assert.ok(finding, "expected a LEGACY_VERBATIM_DESIGN finding");
+  assert.equal(finding.severity, "warning");
+  assert.equal(visual.blocking, false);
+});
+

@@ -286,7 +286,7 @@ node "${CLAUDE_SKILL_DIR}/scripts/materialize-visual-handoff.mjs" --root "." --h
 ```
 
 - O script preserva `original/` intacto, copia apenas o pacote `resolved/` autoritativo de cada `<id>` para o alvo real (`materializeInto`, ex.: `packages/ui/design-systems/<id>/`, ou `src/styles/…` em app unico — ver `references/handoff-contract.md` secao 6), materializa cada asset e aplica `seedBindings`. Nao reescreva `tokens.css`, `DESIGN.md`, `components.html` nem `preview/`: eles sao consumidos verbatim.
-- Um `status: "BLOCKED"` no JSON gravado significa finding alto/critico no pacote (`resolved/` ausente, asset obrigatorio faltando, hash divergente) — corrija na origem (Pensador) antes de prosseguir; nao contorne despachando mesmo assim.
+- Um `status: "BLOCKED"` no JSON gravado significa finding alto/critico no pacote (`resolved/` ausente, asset obrigatorio faltando, hash divergente, ou um handoff `status: DONE` com `design-system-files.variant: "legacy-verbatim"` — desde cc-pensador >= 2.25.0 isso e sempre um producer desatualizado, nunca uma saida valida do proprio Pensador) — corrija na origem (Pensador) antes de prosseguir; nao contorne despachando mesmo assim.
 - Feche o gate somente apos `status: "PASS"`: `gate --gate visualMaterialization --status DONE --evidence file:design-materialization.json`. **O dispatch de qualquer task front-end (Fase 5) fica bloqueado** (`assertPhaseTransition`) enquanto este gate nao fechar — isso e deliberado: um pacote de design nao materializado so aparecia antes como sintoma indireto e generico no gate visualAudit da Fase 9 (imagens quebradas/ausentes), sem apontar a causa raiz.
 - Guarde os caminhos materializados para carregar no prompt de **toda task front-end** (Fase 5) e para o gate de design da Fase 9.
 - No modo Spec, o design chega em `design.md` + `specs/ui-design-system/spec.md`: use-os como requisito normativo do gate.
@@ -345,6 +345,17 @@ Isso elimina alucinacoes de payload, divergencias de casing e interfaces inventa
 
 Antes de lancar subagentes, confirme que `validate-routing.mjs` passou e que o plano de worktrees da wave nao possui overlap sendo despachado em paralelo. A delegacao precisa seguir `assignedAgent` dos artefatos validados.
 
+**"Paralelo" significa multiplas chamadas de tool no MESMO turno, nao dispatch->espera->dispatch.**
+Numa run real (OficinaAI, 2026-09-12), 4 tasks Codex independentes de back-end na mesma wave
+(BE-02..BE-05) foram despachadas via `--background --json` (retorno imediato com `jobId`) mas cada
+uma so comecou depois que a anterior **terminou** — BE-03 iniciou aos 00:26:54, exatamente 8s depois
+de BE-02 reportar `DONE` aos 00:26:46. `--background` deixou de bloquear a chamada, mas isso nao
+adianta se cada dispatch e seu proprio turno esperando o `jobId` antes de decidir o proximo passo:
+o efeito pratico foi tao serial quanto sem `--background`. Para toda task Codex/AGY sem overlap de
+escopo na mesma wave: emita as chamadas de dispatch (Bash `--background`/Agent) **todas na mesma
+resposta do assistente** — sem aguardar `result`/retorno de uma antes de disparar a proxima — e so
+entao inicie o watcher (abaixo) sobre o conjunto inteiro.
+
 Para cada task `ISOLATED`, crie a worktree antes do dispatch e use o path retornado como working directory do executor:
 
 ```bash
@@ -387,18 +398,20 @@ orcamento abaixo passa a medir o arquivo real, nao uma estimativa mental.
 Para AGY, ao invocar o `antigravity-coder`/`antigravity-agent`, passe tambem
 `--dump-prompt ".orchestrator/runs/<slug>/run/prompts/<taskId>.agy.txt"` (ver `subagent-prompts.md`
 Secao 2) — o bridge grava o prompt final **da run real** (pos fallback de overflow, nao um dry run)
-e um sidecar `<path>.audit.json` com `{ promptChars, limit, degraded, droppedFiles, included,
-skipped }`. Preencha os campos "Prompt enviado" e "Contexto degradado" de
+e um sidecar `<path>.audit.json` com `{ promptChars, limit, transport, degraded, droppedFiles,
+included, skipped, designSystems }`. Preencha os campos "Prompt enviado" e "Contexto degradado" de
 `assets/subagents-context-template.md` a partir desse sidecar.
 
-**Quando `degraded: true`** (o bridge descartou arquivos inline por causa do limite de 24.000 chars
-no Windows), a task **nao conta como executada com contexto completo** — registre em
+**Quando `degraded: true`** (raro desde o bridge 4.4.0: so acontece em `--interactive`, que nao tem
+canal de stdin para o prompt — headless nunca degrada mais, pois o prompt vai por stdin sempre que
+excede o argv seguro), a task **nao conta como executada com contexto completo** — registre em
 `run/monitoring.md` a lista de arquivos descartados (`skipped` com `reason:
 "prompt-overflow-windows"`) e decida entre redespachar com `--priority-files` apontando para os
-arquivos que ficaram de fora, ou dividir a task por entregaveis (ver abaixo). Hoje essa degradacao
-so aparecia como um aviso em stderr que ninguem le; a partir daqui e um fato registrado na run.
+arquivos que ficaram de fora, ou dividir a task por entregaveis (ver abaixo). `transport` no
+sidecar diz por onde o prompt realmente foi (`stdin` ou `argv`); `designSystems` lista os pacotes
+Open Design entregues via `--design-system` (ver Secao 2a).
 
-### Regra de limite de prompt AGY (24.000 chars)
+### Orcamento indicativo de prompt AGY/Codex (24.000 chars)
 
 Antes de delegar, meca o arquivo persistido (nao conte manualmente):
 
@@ -407,14 +420,29 @@ node "${CLAUDE_SKILL_DIR}/scripts/check-prompt-budget.mjs" --agent agy \
   --file ".orchestrator/runs/<slug>/run/prompts/<taskId>.md"
 ```
 
-**Threshold:** 24.000 chars. Prompts reais com aspas, barras invertidas, XML e quebras de linha inflam na linha de comando codificada pelo Node.js no Windows. Para AGY isso e limite duro: `ok: false` sai com exit 1 e o chamador deve tratar a falha antes de despachar.
+**Threshold:** 24.000 chars, **puramente indicativo** para os dois agentes (`advisory: true`,
+`ok: false` nunca falha, exit 0) desde o bridge cc-antigravity-plugin 4.4.0: o hop bridge→agy faz
+stream do prompt final via stdin sempre que excede o argv seguro (8.191 chars no Windows, 100.000
+nas demais plataformas), entao nao ha mais descarte de contexto por tamanho no caminho headless.
+Para Codex, a chamada direta ao companion ja usava `--prompt-file` (`codex-companion.mjs`), que
+nunca passou pelo limite de argv.
 
-**Para Codex, a mesma checagem (`--agent codex`) e apenas indicativa** (`advisory: true`, nunca
-falha, exit 0 mesmo acima do limite) — a chamada direta ao companion usa `--prompt-file`
-(`codex-companion.mjs`), que nao passa pelo limite de argv do Windows. Um prompt muito acima do
-limite ainda pode indicar contexto mal recortado; considere dividir por entregaveis mesmo sem erro.
+Um `ok: false` continua um sinal de qualidade a considerar, mesmo sem bloquear: um corpo de task
+muito grande costuma indicar escopo mal recortado, contexto redundante ou uma listagem mecanica que
+deveria ter ido por `scripts/intelligence` em vez de colada inteira no prompt.
 
-Se o prompt montado **exceder 24.000 chars**:
+**Pacote de design system: use `--design-system`, nao `--priority-files`.** Quando a task tem
+contrato visual (Fase 4.0), passe `--design-system "<materializeInto>"` ao bridge em vez de colar
+`tokens.css`/`components.html`/`DESIGN.md` manualmente no corpo do prompt ou for
+ca-los via `--priority-files`: o bridge inclui os arquivos centrais do pacote na integra,
+fora do orcamento de `--max-files`/`--max-file-bytes` e do transporte por argv, e lista o resto do
+pacote para leitura sob demanda (ver Secao 2a de `subagent-prompts.md`). Isso e o que fecha a
+lacuna observada numa run real: o bridge 4.2.x descartava os ~40 arquivos do pacote de design por
+`max-files-exceeded`/`prompt-overflow-windows`, e o AGY passava a ler tokens/componentes por conta
+propria, de forma irregular.
+
+Quando um prompt segue muito acima de 24.000 chars mesmo sem contar o pacote de design (`--design-system`
+ja o exclui do calculo do corpo persistido), isso ainda pode indicar escopo mal recortado:
 
 1. Identifique os entregaveis listados nos criterios de aceite da task original.
 2. Divida os entregaveis em dois grupos independentes (A e B), priorizando que cada grupo seja coeso e nao dependa do outro para executar.
@@ -422,7 +450,7 @@ Se o prompt montado **exceder 24.000 chars**:
    - **Task `<ID>-a`**: herda todos os metadados da task original (categoria, agente, contrato, stack, escopo); `Descricao` e criterios de aceite cobrem apenas o Grupo A.
    - **Task `<ID>-b`**: mesmo metadados; `Descricao` e criterios de aceite cobrem apenas o Grupo B.
 4. Atualize `plan/tasks-classification.md` e `plan/waves.md` substituindo a task original pelas duas subtasks; mantenha a mesma wave se forem independentes.
-5. Remonte os dois prompts e confirme que cada um esta abaixo de 24.000 chars. Se ainda exceder, repita a divisao.
+5. Remonte os dois prompts e confirme que cada um esta abaixo de 24.000 chars. Se ainda exceder, repita a divisao — o gate aqui e a qualidade do recorte, nao o transporte.
 6. Registre a divisao em `run/monitoring.md` e `report/workflow-log.md` com:
    - task original e motivo (prompt excedeu N chars);
    - subtasks geradas e criterios de aceite de cada uma.
@@ -430,8 +458,8 @@ Se o prompt montado **exceder 24.000 chars**:
 **Quando a task nao pode ser dividida por entregaveis** (descricao monolitica indivisivel):
 
 - Reduza `Arquivos e modulos relevantes` ao minimo critico para esta task; mova arquivos secundarios para `Fora do escopo`.
-- Substitua listagens mecanicas extensas por um resumo deterministico de `scripts/intelligence` e referencias de path confinadas ao workspace; nao reduza o modelo, pois isso nao altera o limite da linha de comando e pode violar o piso de fidelidade.
-- Se persistir, registre `promptOverflow: true` em `plan/tasks-classification.md` e peca decisao ao usuario antes de delegar.
+- Substitua listagens mecanicas extensas por um resumo deterministico de `scripts/intelligence` e referencias de path confinadas ao workspace; nao reduza o modelo, pois isso nao altera o orcamento indicativo e pode violar o piso de fidelidade.
+- Se persistir, registre `promptOverflow: true` em `plan/tasks-classification.md` como nota de qualidade — nao ha decisao de usuario a pedir aqui, pois o dispatch nao esta mais bloqueado.
 
 Para Codex:
 
@@ -797,7 +825,7 @@ Isso **nao e o mesmo** que o "N/A" do paragrafo acima (front-end inexistente ou 
 
 1. **Suba a app de verdade** (ex.: `docker compose up --build`) e confirme os servicos saudaveis. Se subir a stack falhar, isso ja e um achado bloqueante — nao existe "APROVADO" para uma app que nao sobe.
 2. **Credenciais de seed/demo para fluxos autenticados.** Antes de tentar logar, confira se o PRD/spec documenta credenciais conhecidas de seed (ver seção "Observabilidade & Operação" do PRD). Se documentadas, use-as para exercitar os `UC-*` que exigem login. Se o ambiente tem seed/demo mas **nenhuma credencial documentada** (ex.: senha só como hash sem plaintext registrado), isso e uma lacuna real: registre-a explicitamente em `review/e2e-verification.md`, e prefira resolvê-la (redefinir a senha do seed para um valor conhecido e documentá-lo, com uma correção pela Fase 7) a simplesmente pular os fluxos autenticados. Só marque os fluxos autenticados como não verificados se resolver a credencial estiver fora do escopo da correção.
-3. **Dirija os fluxos de usuario criticos** em desktop e mobile: home publica; servicos e pecas com imagens; institucional; carrinho/checkout; login administrativo; dashboard; refresh apos login; deep link protegido; estados empty/error/loading/success. Use navegador real via Playwright MCP (ou equivalente).
+3. **Dirija os fluxos de usuario criticos** em desktop e mobile: home publica; servicos e pecas com imagens; institucional; carrinho/checkout; login administrativo; dashboard; refresh apos login; deep link protegido; estados empty/error/loading/success. **Para o viewport mobile, prefira Playwright MCP** (`browser_resize` altera a janela real do navegador headless) **a `claude-in-chrome`**: numa run real (OficinaAI, 2026-09-12), o resize do `claude-in-chrome` retornava sucesso mas a dimensao do screenshot nunca mudava, e o gate `visualAudit` fechou `BLOCKED` por `VIEWPORT_MISSING` — corretamente, sem forjar aprovacao, mas evitavel se Playwright MCP estivesse disponivel e tivesse sido a primeira escolha. Confirme a troca de viewport comparando as dimensoes do screenshot antes de seguir (nao confie so no retorno "sucesso" da chamada de resize); se nenhuma ferramenta capaz de mudar viewport estiver disponivel, registre a limitacao explicitamente (nao invente aprovacao mobile) e marque `visualAudit` como `BLOCKED`.
 4. **Em cada fluxo, verifique:**
    - console e network **sem erros de CORS** nem `net::ERR_FAILED`;
    - cada requisicao de API retorna 2xx **e a UI reflete o dado real** — desconfie de "200 mas a tela ficou vazia/inalterada", que e o sintoma classico de casing divergente ou campo `undefined`;

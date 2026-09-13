@@ -388,28 +388,21 @@ Exemplo de baseline mínimo:
 }
 ```
 
-## Limite de prompt AGY — limitação do CLI no Windows
+## Orçamento de prompt AGY — indicativo, não é limitação de CLI
 
-O CLI do AGY é invocado via `child_process` pelo bridge do plugin. No Windows, o Node.js passa o prompt como argumento de linha de comando, aplicando quoting automático: cada `"` vira `\"` e cada `\` se duplica.
+O CLI do AGY é invocado via `child_process` pelo bridge do plugin. No Windows, o Node.js passava o prompt via argv com quoting automático (cada `"` vira `\"`, cada `\` se duplica), o que antes quebrava perto de ~29.140 chars reais (`ENAMETOOLONG`).
 
-Resultado dos testes empíricos:
+Desde o cc-antigravity-plugin **4.4.0**, esse teto deixou de valer: o bridge faz stream do prompt final para o AGY via stdin sempre que ele excede o tamanho seguro de argv da plataforma (8.191 chars no Windows, 100.000 nas demais), então o dispatch headless nunca mais descarta contexto inline por tamanho. Um pacote de design system entregue ao bridge via `--design-system <dir>` vai na íntegra, independente do tamanho, fora desse orçamento por completo.
 
-| Tipo de conteúdo | Prompt máximo | Break point |
-|---|---|---|
-| Texto puro (xxx...) | 32.694 chars | 32.695 → `ENAMETOOLONG` |
-| Prompt real (aspas, `\`, XML, `\n`) | ~28.520 chars | ~29.140 → `ENAMETOOLONG` |
-
-**Threshold conservador adotado: 28.000 chars.**
-
-Antes de delegar qualquer task para AGY, o orquestrador monta o prompt completo e conta os caracteres. Se exceder 28.000 chars:
+O `check-prompt-budget.mjs` continua medindo o corpo da task persistido contra um **orçamento indicativo de 24.000 chars** (`advisory: true` para qualquer agente, nunca bloqueia). Ele continua útil como sinal de qualidade — um corpo de task tão grande costuma indicar trabalho mal recortado — mas um `ok: false` não exige mais divisão antes do dispatch. Quando a checagem sinaliza uma task e ela realmente se beneficia de divisão:
 
 1. Divide os entregáveis da task em dois grupos independentes (A e B).
 2. Cria subtasks `<ID>-a` e `<ID>-b`, cada uma cobrindo um grupo.
 3. Atualiza `plan/tasks-classification.md` e `plan/waves.md`.
-4. Remonta os dois prompts e valida que cada um está abaixo do limite.
+4. Remonta os dois prompts e confirma que cada um está abaixo do orçamento.
 5. Registra a divisão em `run/monitoring.md` e `report/workflow-log.md` com o tamanho original e o motivo.
 
-Se a task for monolítica e indivisível por entregáveis, o orquestrador tenta reduzir `Arquivos e módulos relevantes` e, como último recurso, registra `promptOverflow: true` e pede decisão ao usuário.
+Se a task for monolítica e indivisível por entregáveis, o orquestrador reduz `Arquivos e módulos relevantes` ao essencial e, como último recurso, registra `promptOverflow: true` como nota de qualidade em `plan/tasks-classification.md` — não há mais decisão de usuário a pedir aqui, já que o dispatch não é bloqueado.
 
 ## Política de quota
 

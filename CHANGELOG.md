@@ -1,5 +1,66 @@
 # Changelog
 
+## [4.17.0] — 2026-09-13 — `updatePhase` nao pisa mais em gate proprio aberto
+
+O usuario ja tinha rascunhado esse bug report na propria run analisada: "`orchestration-state.mjs
+phase --status DONE` silently flips unrelated open gates to DONE". Reproduzido e corrigido.
+
+- **Causa raiz:** `updatePhase(..., "DONE")` so verificava que fases PREDECESSORAS estavam
+  fechadas (`assertPhaseTransition`); nunca verificava os gates da PROPRIA fase antes de fechar, e
+  o loop de sincronizacao no final de `updatePhase` sobrescrevia incondicionalmente todo gate
+  mapeado aquela fase para o novo status — inclusive um gate que ja estava `BLOCKED` por um motivo
+  legitimo, sem passar por nenhuma das validacoes de `updateCompletionGate` (evidencia, achados de
+  UI, relatorio de materializacao, exigencia de sweep). Reproduzido: `visualAudit` `BLOCKED` por
+  `VIEWPORT_MISSING`, fase 9 fechada `DONE` sem erro, `visualAudit` virou `DONE` silenciosamente.
+- **`assertPhaseTransition`:** nova checagem `PHASE_GATE_NOT_DONE`, espelhando a checagem de
+  predecessores — uma fase so pode fechar `DONE` quando os gates que lhe pertencem (via
+  `completionGateForPhase`) e sao `required` ja estao `DONE`/`N/A`.
+- **Loop de sincronizacao de `updatePhase`:** para de sobrescrever um gate cujo status atual ja e
+  `DONE`, `BLOCKED`, `FAILED` ou `N/A` — so avanca gates ainda intocados (`PENDING`/`RUNNING`).
+  Defesa em profundidade para as transicoes de fase que a checagem acima nao cobre
+  (`RUNNING`/`FAILED`/`BLOCKED`/`CANCELLED`).
+- 6 testes novos em `tests/phase-transitions.test.mjs` (reproducao exata da regressao + o caminho
+  de sucesso legitimo + garantia de que um gate DONE nao regride quando a fase vai BLOCKED por
+  outro motivo). 14 testes existentes em `phase-transitions.test.mjs`, `orchestration-state.test.mjs`
+  e `learning-curator.test.mjs` dependiam do comportamento antigo (fechavam fases em loop sem
+  jamais chamar `updateCompletionGate`) e foram corrigidos para fechar cada gate legitimamente
+  antes de fechar a fase — o mesmo padrao que a run real deveria ter seguido.
+
+## [4.16.0] — 2026-09-13
+
+- **`pensador-ingest.mjs` (`inspectVisualHandoff`):** `LEGACY_VERBATIM_DESIGN` escala de `warning`
+  para `high` (bloqueante) quando o handoff upstream do Pensador tem `status: "DONE"` — defesa em
+  profundidade complementar ao novo gate `validateVisualCompleteness()` do cc-pensador
+  (>= 2.25.0): um handoff `DONE` com pacote de design `legacy-verbatim` so pode chegar aqui vindo
+  de um producer desatualizado. `status: "PARTIAL"/"BLOCKED"` continua `warning` (o gap ja vem
+  disclosed via `summary`). Isso fecha a lacuna real observada numa run (OficinaAI, 2026-09-12):
+  `materialize-visual-handoff.mjs --apply` copiava um pacote de design nao auditado em vez de
+  fechar o gate `visualMaterialization` como `BLOCKED`, exatamente o comportamento que
+  `references/workflow.md` Secao 4.0 ja documentava ("corrija na origem antes de prosseguir; nao
+  contorne despachando mesmo assim") mas que a severidade `warning` nunca acionava.
+
+## [4.15.0] — 2026-09-13
+
+Motivação: numa run real (OficinaAI, 12/09), o bridge cc-antigravity-plugin 4.2.x descartava os
+~40 arquivos do pacote de design (`max-files-exceeded`/`prompt-overflow-windows`) e o AGY passou a
+ler `tokens.css`/`components.html`/`DESIGN.md` por conta própria, de forma irregular por task.
+`.claude-plugin/marketplace.json` também estava com drift de versão (4.12.0) contra
+`package.json`/`plugin.json` (4.14.0) — o mesmo padrão que fez a correção 4.3.0 do
+cc-antigravity-plugin nunca ser instalada.
+
+- **`--design-system <dir>`** (bridge cc-antigravity-plugin >= 4.4.0) substitui `--priority-files`
+  como forma de entregar o pacote de design ao AGY nas Fases 4.0/5/9:
+  `subagent-prompts.md` Seções 2/2a/5, `SKILL.md` item 13 e checklist, `workflow.md`.
+- **Orçamento de prompt AGY/Codex passa a ser sempre indicativo** (`check-prompt-budget.mjs`,
+  `advisory: true` para os dois agentes): o bridge 4.4.0 faz stream do prompt final via stdin
+  sempre que excede o argv seguro da plataforma, eliminando o descarte de contexto por tamanho no
+  caminho headless. O threshold de 24.000 chars continua como sinal de qualidade (escopo mal
+  recortado), não como bloqueio.
+- `.claude-plugin/marketplace.json` realinhado com `package.json`/`plugin.json` (drift 4.12.0 →
+  4.15.0 corrigido).
+- `README.md`/`README.pt-BR.md`: seção "AGY Prompt Limit" reescrita para refletir o comportamento
+  indicativo e o transporte via stdin.
+
 ## [4.14.0] — 2026-09-12
 
 - Diretrizes avançadas de Context7 MCP (Upstash Context7):

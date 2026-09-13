@@ -483,9 +483,15 @@ test("reconciliation never regresses a terminal task", () => {
 test("resume advances past a durably completed phase", () => {
   const { root, artifactDir } = fixture();
   initRun({ projectRoot: root, artifactDir, slug: "demo-run", runId: "run-next-phase" });
-  for (const phase of [1, 2, 3, 4, 5]) {
+  for (const phase of [1, 2, 3]) {
     updatePhase(artifactDir, phase, "DONE", { projectRoot: root, evidence: `test:${phase}:DONE` });
   }
+  writeFileSync(join(artifactDir, "design-materialization.json"), JSON.stringify({ status: "PASS", applied: true, findings: [] }), "utf8");
+  updateCompletionGate(artifactDir, "visualMaterialization", "DONE", { projectRoot: root, evidence: ["file:design-materialization.json"] });
+  updatePhase(artifactDir, 4, "DONE", { projectRoot: root, evidence: "test:4:DONE" });
+  updatePhase(artifactDir, 5, "DONE", { projectRoot: root, evidence: "test:5:DONE" });
+  sweepStalledTasks(artifactDir, { projectRoot: root });
+  updateCompletionGate(artifactDir, "monitoring", "DONE", { projectRoot: root, evidence: ["manual"] });
   updatePhase(artifactDir, 6, "DONE", { projectRoot: root, evidence: "test:6:DONE" });
 
   const resumed = resumeRunAtDirectory(artifactDir, { projectRoot: root });
@@ -767,9 +773,37 @@ test("executor operational reason codes survive canonical status mapping", () =>
 test("resume follows the explicit phase sequence after browser E2E", () => {
   const { root, artifactDir } = fixture();
   initRun({ projectRoot: root, artifactDir, slug: "demo-run", runId: "run-phase-sequence" });
-  for (const phase of [1, 2, 3, 4, 5, 6, 7, 8, 9]) {
+  for (const phase of [1, 2, 3]) {
     updatePhase(artifactDir, phase, "DONE", { projectRoot: root, evidence: `test:${phase}:DONE` });
   }
+  writeFileSync(join(artifactDir, "design-materialization.json"), JSON.stringify({ status: "PASS", applied: true, findings: [] }), "utf8");
+  updateCompletionGate(artifactDir, "visualMaterialization", "DONE", { projectRoot: root, evidence: ["file:design-materialization.json"] });
+  updatePhase(artifactDir, 4, "DONE", { projectRoot: root, evidence: "test:4:DONE" });
+  updatePhase(artifactDir, 5, "DONE", { projectRoot: root, evidence: "test:5:DONE" });
+  sweepStalledTasks(artifactDir, { projectRoot: root });
+  updateCompletionGate(artifactDir, "monitoring", "DONE", { projectRoot: root, evidence: ["manual"] });
+  updatePhase(artifactDir, 6, "DONE", { projectRoot: root, evidence: "test:6:DONE" });
+  updateCompletionGate(artifactDir, "backendReview", "DONE", { projectRoot: root, evidence: ["manual"] });
+  updatePhase(artifactDir, 7, "DONE", { projectRoot: root, evidence: "test:7:DONE" });
+  updatePhase(artifactDir, 8, "DONE", { projectRoot: root, evidence: "test:8:DONE" });
+  updateCompletionGate(artifactDir, "frontendReview", "DONE", { projectRoot: root, evidence: ["manual"] });
+  writeFileSync(join(artifactDir, "desktop.png"), "fake-png", "utf8");
+  writeFileSync(join(artifactDir, "mobile.png"), "fake-png", "utf8");
+  writeFileSync(join(artifactDir, "ui-evidence.json"), JSON.stringify({
+    routes: [{
+      route: "/",
+      requirementRef: "RF-1",
+      browserAssertion: "home renders the hero heading",
+      apiEvidence: { real: true },
+      viewports: [
+        { kind: "desktop", screenshot: "desktop.png" },
+        { kind: "mobile", screenshot: "mobile.png" },
+      ],
+    }],
+  }), "utf8");
+  updateCompletionGate(artifactDir, "visualAudit", "DONE", { projectRoot: root, evidence: ["file:ui-evidence.json"] });
+  updatePhase(artifactDir, 9, "DONE", { projectRoot: root, evidence: "test:9:DONE" });
+  updateCompletionGate(artifactDir, "browserE2E", "DONE", { projectRoot: root, evidence: ["browser:e2e:PASS"] });
   updatePhase(artifactDir, 9.5, "DONE", {
     projectRoot: root,
     evidence: "browser:e2e:PASS",

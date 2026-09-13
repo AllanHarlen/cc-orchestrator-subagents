@@ -11,7 +11,7 @@ Sempre leia este arquivo antes de delegar para Codex ou Antigravity/AGY.
 - Se aparecer cota, rate limit, billing, resource exhausted, model capacity ou daily limit no AGY, preserve o status cru `Status: QUOTA_EXAUSTED`.
 - Nao tente contornar cota com retries longos ou mudanca arbitraria de modelo.
 - Antes de prometer Context7 ou Codebase Memory no prompt de uma task Codex/AGY, prefira `checks.optional.mcpPerAgent.<agent>.<servidor>.ok` (verdade ao vivo por agente, so existe quando o preflight rodou com `--check-agent-mcp`) em vez do agregado `checks.optional.mcp.<servidor>.ok` — esse agregado so prova que o MCP esta registrado em algum lugar da maquina, nao necessariamente na CLI que vai executar a task (ver `references/mcp-context.md`).
-- Se o sinal aplicavel indicar disponibilidade para Context7, use-o antes de decidir sobre bibliotecas, frameworks, SDKs, APIs, CLIs ou cloud services.
+- Se o sinal aplicavel indicar disponibilidade para Context7, use-o antes de decidir sobre bibliotecas, frameworks, SDKs, APIs, CLIs ou cloud services externos, aplicando Single-Concept Scoping (consulta focada em um unico conceito, sem misturar temas), versao canonica `/org/project/version` quando compativel com o projeto e limite de ate 3 consultas por tarefa. Nao use para logica de negocio interna ou refatoracao local.
 - Se o sinal aplicavel indicar disponibilidade para Codebase Memory, use `search_graph`/`trace_path`/`get_code_snippet` para localizar o simbolo, quem o chama e quem ele chama, antes de varrer arquivos com Read/Glob/Grep. Grafo e pista, nao prova: confirme por leitura do arquivo antes de alterar comportamento. Se o grafo nao cobrir o arquivo, ou a consulta falhar, leia o arquivo diretamente. Fique dentro do escopo permitido mesmo que o grafo aponte para fora dele.
 - Se existir contrato API/UI, siga o contrato como fonte da verdade.
 - Valide casing JSON e wire format real; nao assuma que nomes de DTO internos sao iguais ao payload na rede.
@@ -100,6 +100,12 @@ Skills relevantes:
 
 Context7 MCP:
 <MANTER SOMENTE SE DISPONIVEL>
+- consulte documentacao atual antes de escrever codigo que usa libs/frameworks/APIs externos;
+- use resolve-library-id com o nome oficial pontuado (ex: 'Next.js');
+- se houver versao compativel com o projeto em Versions, use o ID '/org/project/version';
+- faca query-docs com Single-Concept Scoping (consulta escopada a um unico conceito por vez);
+- limite maximo de 3 consultas por tarefa; nunca use para logica de negocio interna;
+- cite docs consultadas no retorno; senao siga padroes locais;
 
 Codebase Memory MCP:
 <MANTER SOMENTE SE DISPONIVEL>
@@ -145,10 +151,19 @@ Retorno:
 **Parametros:**
 
 ```text
---mode accept-edits --format stream-json --model <AGY_MODEL> [--effort <AGY_EFFORT>] [--timeout <AGY_TIMEOUT>] [--parallel] [--subagent-model <SUBAGENT_MODEL>] --dirs <DIRS> \
+--mode accept-edits --format stream-json --model <AGY_MODEL> [--effort <AGY_EFFORT>] [--timeout <AGY_TIMEOUT>] [--parallel] [--subagent-model <SUBAGENT_MODEL>] --dirs <DIRS> [--design-system <DESIGN_SYSTEM_DIR>] \
 --task-file ".orchestrator/runs/<slug>/run/prompts/<taskId>.md" \
 --dump-prompt ".orchestrator/runs/<slug>/run/prompts/<taskId>.agy.txt"
 ```
+
+`--design-system <DESIGN_SYSTEM_DIR>` (repetivel, aceita lista separada por virgula): quando a task
+consome um pacote Open Design materializado na Fase 4.0, aponte para o `materializeInto` real (ex.:
+`packages/ui/design-systems/<id>/`) — **nao** inclua esse diretorio em `--dirs` tambem, para nao
+duplicar leitura. O bridge inlina os arquivos centrais do pacote (`design-contract.json`,
+`DESIGN.md`, `tokens.css`, `components.html`, `USAGE.md`, `components.manifest.json`,
+`assets/manifest.json`) na integra, fora do orcamento de `--max-files`/`--max-file-bytes`, e lista o
+resto do pacote (`preview/`, `system/`, `source/`) para o AGY ler sob demanda com `view_file`.
+Detalhes na Secao 2a.
 
 O bridge resolve aliases com `agy models` e encaminha `--model` nativamente, sem modificar configuracoes do usuario. `stream-json` permite acompanhar `init`, `step_update` e `result`; progresso fica separado em `stderr` e apenas a resposta final segue em `stdout`.
 
@@ -158,19 +173,20 @@ Passe `--parallel` quando `agyParallel: yes` para a task. Se `agySubagentModel` 
 subagente — `antigravity-coder` nao tem ferramenta de escrita, so `Bash(node *antigravity-bridge.js*)`)
 persiste o corpo em `run/prompts/<taskId>.md` antes de invocar o subagente, e a instrucao do
 subagente e so passar `--task-file ".orchestrator/runs/<slug>/run/prompts/<taskId>.md"` para o bridge —
-o proprio bridge le o arquivo. Isso protege o salto Bash→bridge do limite de linha de comando (nao
-muda o orcamento de 24.000 chars do salto bridge→agy, que continua real). Meca o mesmo arquivo antes
-de despachar:
+o proprio bridge le o arquivo. Desde o bridge 4.4.0, o salto seguinte (bridge→agy) tambem deixou de
+ter orcamento real: o bridge faz stream do prompt final via stdin sempre que ele excede o argv
+seguro da plataforma. Meca o mesmo arquivo antes de despachar, ainda assim, como sinal de qualidade:
 `node "${CLAUDE_SKILL_DIR}/scripts/check-prompt-budget.mjs" --agent agy --file
-.orchestrator/runs/<slug>/run/prompts/<taskId>.md` — para AGY isso e limite duro (`advisory: false`,
-exit 1 se estourar); acima do limite, divida a task por entregaveis antes de delegar (ver "Regra de
-limite de prompt AGY" em `references/workflow.md`).
+.orchestrator/runs/<slug>/run/prompts/<taskId>.md` — `advisory: true`, `ok: false` nunca bloqueia,
+mas segue indicando escopo mal recortado (ver "Orcamento indicativo de prompt AGY/Codex" em
+`references/workflow.md`).
 
 **`--dump-prompt` audita o contexto que de fato chegou ao AGY.** O sidecar `<path>.audit.json`
-(`{ promptChars, limit, degraded, droppedFiles, included, skipped }`) alimenta os campos "Prompt
-enviado" e "Contexto degradado" de `assets/subagents-context-template.md`. Quando
-`degraded: true`, a task nao conta como executada com contexto completo — ver "Prompt efetivo como
-artefato da run" em `references/workflow.md`.
+(`{ promptChars, limit, transport, degraded, droppedFiles, included, skipped, designSystems }`)
+alimenta os campos "Prompt enviado" e "Contexto degradado" de `assets/subagents-context-template.md`.
+`transport` diz se o prompt foi por `stdin` (o normal, sem perda) ou `argv` (so em `--interactive`).
+Quando `degraded: true`, a task nao conta como executada com contexto completo — ver "Prompt efetivo
+como artefato da run" em `references/workflow.md`.
 
 **Corpo do prompt:**
 
@@ -241,6 +257,12 @@ Modelo dos subagentes:
 
 Context7 MCP:
 <MANTER SOMENTE SE DISPONIVEL>
+- consulte documentacao atual antes de escrever codigo que usa libs/frameworks/APIs externos;
+- use resolve-library-id com o nome oficial pontuado (ex: 'Next.js');
+- se houver versao compativel com o projeto em Versions, use o ID '/org/project/version';
+- faca query-docs com Single-Concept Scoping (consulta escopada a um unico conceito por vez);
+- limite maximo de 3 consultas por tarefa; nunca use para logica de negocio interna;
+- cite docs consultadas no retorno; senao siga padroes locais;
 
 Codebase Memory MCP:
 <MANTER SOMENTE SE DISPONIVEL>
@@ -294,7 +316,13 @@ O Orquestrador nunca abre uma rodada de decisao visual. A materializacao acontec
 
 1. `materialize-visual-handoff.mjs` roda sem `--apply` primeiro; finding alto/critico bloqueia dispatch (o gate nao fecha).
 2. Roda novamente com `--apply` para copiar somente o pacote `resolved` autoritativo e os assets conforme `materializeInto`; a saida vai para `design-materialization.json` e fecha o gate.
-3. Inclua `design-contract.json`, `tokens.css`, `DESIGN.md` e `assets/manifest.json` em `--priority-files`; o prompt AGY final deve ficar abaixo de 24.000 caracteres.
+3. Ao despachar cada task front-end, passe `--design-system "<materializeInto>"` ao bridge (a mesma
+   pasta de destino que o passo 2 acabou de preencher, ex.: `packages/ui/design-systems/<id>/`) —
+   nao cole `design-contract.json`/`tokens.css`/`DESIGN.md`/`assets/manifest.json` em
+   `--priority-files` nem no corpo do prompt: o bridge cc-antigravity-plugin 4.4.0+ entrega esses
+   arquivos na integra fora do orcamento de `--max-files`/`--max-file-bytes` e do transporte por argv
+   (ver Secao 2). Confirme no sidecar `<taskId>.agy.txt.audit.json` que `designSystems` lista o
+   pacote esperado e que os arquivos centrais aparecem em `included` com `truncated: false`.
 4. Aplique cada `seedBindings` e registre id, destino e binding no item 14.
 5. Handoff sem `variant` e `legacy-verbatim`: registre degradacao, nao gere assets e aplique gates visuais reforcados.
 
@@ -376,10 +404,14 @@ Salve o resultado em `review/review-final.md`.
 **Parametros:**
 
 ```text
---read-only --format json --model pro-high --effort high [--timeout <AGY_TIMEOUT>] --dirs <DIRS_FRONT_END>
+--read-only --format json --model pro-high --effort high [--timeout <AGY_TIMEOUT>] --dirs <DIRS_FRONT_END> [--design-system <DESIGN_SYSTEM_DIR>]
 ```
 
 O review front-end usa sempre `pro-high` com effort `high`, independentemente do `agyModel` de implementacao. JSON e preferido aqui porque o review e curto e nao precisa de progresso NDJSON.
+Passe `--design-system <DESIGN_SYSTEM_DIR>` (mesmo `materializeInto` da Fase 4.0) quando houver
+pacote de design: garante que o revisor recebe `tokens.css`/`components.html`/`DESIGN.md` inteiros
+para conferir fidelidade, em vez de depender de o modelo decidir ler esses arquivos por conta
+propria dentro de `--dirs`.
 
 **Corpo do prompt:**
 

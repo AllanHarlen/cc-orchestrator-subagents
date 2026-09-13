@@ -14,6 +14,94 @@ import {
 } from "../skills/orchestrator-multi-agent-development/scripts/lib/orchestration-state.mjs";
 
 /**
+ * Fixture with both a BACKEND_ONLY and a FRONTEND_ONLY task, so
+ * frontendReview/visualAudit/browserE2E compute as `required: true` (see
+ * `completionGateRequirements`) — needed to exercise the phase 9 gate below.
+ */
+function frontendFixture(slug = "phase-run-frontend") {
+  const root = mkdtempSync(join(process.cwd(), ".tmp-phase-fe-test-"));
+  roots.push(root);
+  const artifactDir = join(root, ".orchestration", slug);
+  mkdirSync(artifactDir, { recursive: true });
+  writeFileSync(
+    join(artifactDir, "tasks-classification.md"),
+    ["# Tasks", "", "## BE-01 - Endpoint", "- category: BACKEND_ONLY", "", "## FE-01 - Screen", "- category: FRONTEND_ONLY"].join("\n"),
+    "utf8",
+  );
+  writeFileSync(join(artifactDir, "waves.md"), "# Waves\n\n## Wave 1\n- BE-01\n\n## Wave 2\n- FE-01\n", "utf8");
+  initRun({ projectRoot: root, artifactDir, slug, runId: `${slug}-001` });
+  return { root, artifactDir };
+}
+
+/** Closes phases 1-8 (and their own required gates) legitimately, leaving phase 9 open. */
+function closeThroughPhase8(root, artifactDir) {
+  for (const phase of [1, 2, 3]) updatePhase(artifactDir, phase, "DONE", { projectRoot: root, evidence: `t${phase}` });
+  writeFileSync(join(artifactDir, "design-materialization.json"), JSON.stringify({ status: "PASS", applied: true, findings: [] }), "utf8");
+  updateCompletionGate(artifactDir, "visualMaterialization", "DONE", { projectRoot: root, evidence: ["file:design-materialization.json"] });
+  updatePhase(artifactDir, 4, "DONE", { projectRoot: root, evidence: "t4" });
+  updatePhase(artifactDir, 5, "DONE", { projectRoot: root, evidence: "t5" });
+  sweepStalledTasks(artifactDir, { projectRoot: root });
+  updateCompletionGate(artifactDir, "monitoring", "DONE", { projectRoot: root, evidence: ["manual"] });
+  updatePhase(artifactDir, 6, "DONE", { projectRoot: root, evidence: "t6" });
+  updateCompletionGate(artifactDir, "backendReview", "DONE", { projectRoot: root, evidence: ["manual"] });
+  updatePhase(artifactDir, 7, "DONE", { projectRoot: root, evidence: "t7" });
+  updatePhase(artifactDir, 8, "DONE", { projectRoot: root, evidence: "t8" });
+}
+
+/**
+ * Generic "close phases 1..maxPhase legitimately" helper: for every phase
+ * whose own completion gate(s) are `required`, closes the gate via
+ * `updateCompletionGate` (with whatever evidence that gate's own validation
+ * demands) before calling `updatePhase(..., "DONE")` — mirrors how the
+ * real workflow closes a gate, then the phase (see PHASE_GATE_NOT_DONE
+ * below). Not-required gates (e.g. frontendReview on a backend-only
+ * fixture) are left alone; `synchronizeCompletionGates` already carries
+ * them to N/A. Replaces the pre-fix pattern of blindly looping
+ * `updatePhase(phase, "DONE")`, which only worked because updatePhase used
+ * to silently force every gate for that phase to DONE too (the exact bug
+ * `PHASE_GATE_NOT_DONE`/the sync-loop guard above exist to close).
+ */
+function closePhasesThrough(root, artifactDir, maxPhase) {
+  for (let phase = 1; phase <= maxPhase; phase += 1) {
+    const required = (gateId) => loadRun(artifactDir).state.completionGates[gateId]?.required === true;
+    if (phase === 4 && required("visualMaterialization")) {
+      writeFileSync(join(artifactDir, "design-materialization.json"), JSON.stringify({ status: "PASS", applied: true, findings: [] }), "utf8");
+      updateCompletionGate(artifactDir, "visualMaterialization", "DONE", { projectRoot: root, evidence: ["file:design-materialization.json"] });
+    }
+    if (phase === 6 && required("monitoring")) {
+      sweepStalledTasks(artifactDir, { projectRoot: root });
+      updateCompletionGate(artifactDir, "monitoring", "DONE", { projectRoot: root, evidence: ["manual"] });
+    }
+    if (phase === 8 && required("backendReview")) {
+      updateCompletionGate(artifactDir, "backendReview", "DONE", { projectRoot: root, evidence: ["manual"] });
+    }
+    if (phase === 9) {
+      if (required("frontendReview")) {
+        updateCompletionGate(artifactDir, "frontendReview", "DONE", { projectRoot: root, evidence: ["manual"] });
+      }
+      if (required("visualAudit")) {
+        writeFileSync(join(artifactDir, "desktop.png"), "fake-png", "utf8");
+        writeFileSync(join(artifactDir, "mobile.png"), "fake-png", "utf8");
+        writeFileSync(join(artifactDir, "ui-evidence.json"), JSON.stringify({
+          routes: [{
+            route: "/",
+            requirementRef: "RF-1",
+            browserAssertion: "home renders the hero heading",
+            apiEvidence: { real: true },
+            viewports: [
+              { kind: "desktop", screenshot: "desktop.png" },
+              { kind: "mobile", screenshot: "mobile.png" },
+            ],
+          }],
+        }), "utf8");
+        updateCompletionGate(artifactDir, "visualAudit", "DONE", { projectRoot: root, evidence: ["file:ui-evidence.json"] });
+      }
+    }
+    updatePhase(artifactDir, phase, "DONE", { projectRoot: root, evidence: `t${phase}` });
+  }
+}
+
+/**
  * Cobertura dedicada de `assertPhaseTransition`, da cascata de reabertura
  * (Achado 5) e da delegacao de gate ao Testador (secao 2.6 do plano de
  * ajustes derivado de analise-run-oficina-saas-20260905.md).
@@ -140,9 +228,7 @@ test("a phase cannot start RUNNING while an earlier predecessor is still RUNNING
 
 test("N/A on phase 9.5 is rejected because browser E2E is mandatory", () => {
   const { root, artifactDir } = fixture();
-  for (const phase of [1, 2, 3, 4, 5, 6, 7, 8, 9]) {
-    updatePhase(artifactDir, phase, "DONE", { projectRoot: root, evidence: `t${phase}` });
-  }
+  closePhasesThrough(root, artifactDir, 9);
   assert.throws(
     () => updatePhase(artifactDir, 9.5, "N/A", { projectRoot: root, reason: "no separate front-end deploy" }),
     (error) => error instanceof OrchestrationStateError && error.code === "PHASE_NOT_WAIVABLE",
@@ -151,9 +237,7 @@ test("N/A on phase 9.5 is rejected because browser E2E is mandatory", () => {
 
 test("N/A is rejected on a phase whose gate is not waivable", () => {
   const { root, artifactDir } = fixture();
-  for (const phase of [1, 2, 3, 4, 5, 6, 7]) {
-    updatePhase(artifactDir, phase, "DONE", { projectRoot: root, evidence: `t${phase}` });
-  }
+  closePhasesThrough(root, artifactDir, 7);
   assert.throws(
     () => updatePhase(artifactDir, 8, "N/A", { projectRoot: root, reason: "skip review" }),
     (error) => error instanceof OrchestrationStateError && error.code === "PHASE_NOT_WAIVABLE",
@@ -162,10 +246,13 @@ test("N/A is rejected on a phase whose gate is not waivable", () => {
 
 test("a completed phase 9.5 counts as closed for a later phase's predecessor check", () => {
   const { root, artifactDir } = fixture();
-  for (const phase of [1, 2, 3, 4, 5, 6, 7, 8, 9]) {
-    updatePhase(artifactDir, phase, "DONE", { projectRoot: root, evidence: `t${phase}` });
-  }
+  closePhasesThrough(root, artifactDir, 9);
   updatePhase(artifactDir, 9.5, "DONE", { projectRoot: root, evidence: "browser-e2e:PASS" });
+  // reports/handoff are phase 10's own gates (always required) — close them
+  // for real so the assertion below is about the predecessor check this
+  // test targets, not about phase 10's own PHASE_GATE_NOT_DONE.
+  updateCompletionGate(artifactDir, "reports", "DONE", { projectRoot: root, evidence: ["manual"] });
+  updateCompletionGate(artifactDir, "handoff", "DONE", { projectRoot: root, evidence: ["manual"] });
   // Nao deve lancar: 9.5 fechado como DONE conta como predecessor fechado.
   const result = updatePhase(artifactDir, 10, "DONE", { projectRoot: root, evidence: "t10" });
   assert.equal(result.state.lastSafePhase, 10);
@@ -173,9 +260,7 @@ test("a completed phase 9.5 counts as closed for a later phase's predecessor che
 
 test("re-entering a DONE-and-past phase reopens later DONE phases and their gates (Achado 5)", () => {
   const { root, artifactDir } = fixture();
-  for (const phase of [1, 2, 3, 4, 5, 6, 7]) {
-    updatePhase(artifactDir, phase, "DONE", { projectRoot: root, evidence: `t${phase}` });
-  }
+  closePhasesThrough(root, artifactDir, 7);
   updateCompletionGate(artifactDir, "backendReview", "DONE", {
     projectRoot: root,
     evidence: ["review:PASS"],
@@ -215,13 +300,59 @@ test("lastSafePhase never advances past a jump, only past a truly closed prefix"
 });
 
 /* -------------------------------------------------------------------------- */
+/* PHASE_GATE_NOT_DONE — phase close nao pode mais pisar num gate proprio     */
+/* aberto (bug real: OficinaAI, 2026-09-12, visualAudit BLOCKED virou DONE    */
+/* silenciosamente ao fechar a fase 9)                                        */
+/* -------------------------------------------------------------------------- */
+
+test("updatePhase refuses to close a phase DONE while its own gate is legitimately BLOCKED, and does not touch the gate", () => {
+  const { root, artifactDir } = frontendFixture();
+  closePhasesThrough(root, artifactDir, 8);
+  updateCompletionGate(artifactDir, "frontendReview", "DONE", { projectRoot: root, evidence: ["manual"] });
+  updateCompletionGate(artifactDir, "visualAudit", "BLOCKED", { projectRoot: root, reason: "VIEWPORT_MISSING: claude-in-chrome resize did not change the screenshot dimensions" });
+
+  assert.throws(
+    () => updatePhase(artifactDir, 9, "DONE", { projectRoot: root, evidence: "t9" }),
+    (error) =>
+      error instanceof OrchestrationStateError &&
+      error.code === "PHASE_GATE_NOT_DONE" &&
+      error.details.phase === 9 &&
+      error.details.blockedBy.includes("visualAudit"),
+  );
+
+  // The exact regression: visualAudit must still read BLOCKED afterwards,
+  // not have been silently overwritten to DONE by the phase-close attempt.
+  const gate = loadRun(artifactDir).state.completionGates.visualAudit;
+  assert.equal(gate.status, "BLOCKED");
+  assert.equal(gate.reason, "VIEWPORT_MISSING: claude-in-chrome resize did not change the screenshot dimensions");
+});
+
+test("updatePhase succeeds once the phase's own gate is legitimately closed DONE", () => {
+  const { root, artifactDir } = frontendFixture();
+  closePhasesThrough(root, artifactDir, 9);
+  const state = loadRun(artifactDir).state;
+  assert.equal(state.completionGates.visualAudit.status, "DONE");
+  assert.equal(state.completionGates.frontendReview.status, "DONE");
+  assert.equal(state.phaseHistory["9"].status, "DONE");
+});
+
+test("updatePhase does not downgrade an already-DONE gate when the phase itself is later marked BLOCKED", () => {
+  const { root, artifactDir } = frontendFixture();
+  closePhasesThrough(root, artifactDir, 9);
+  assert.equal(loadRun(artifactDir).state.completionGates.visualAudit.status, "DONE");
+
+  updatePhase(artifactDir, 9, "BLOCKED", { projectRoot: root, reason: "unrelated integration defect found in 9.5" });
+  // visualAudit itself was never re-opened or re-run; the phase going
+  // BLOCKED for an unrelated reason must not silently downgrade it.
+  assert.equal(loadRun(artifactDir).state.completionGates.visualAudit.status, "DONE");
+});
+
+/* -------------------------------------------------------------------------- */
 /* Delegacao de gate ao Testador (secao 2.6)                                   */
 /* -------------------------------------------------------------------------- */
 
 function closeThroughPhase9(root, artifactDir) {
-  for (const phase of [1, 2, 3, 4, 5, 6, 7, 8, 9]) {
-    updatePhase(artifactDir, phase, "DONE", { projectRoot: root, evidence: `t${phase}` });
-  }
+  closePhasesThrough(root, artifactDir, 9);
 }
 
 test("updateCompletionGate accepts delegatedTo only alongside N/A on a waivable gate", () => {

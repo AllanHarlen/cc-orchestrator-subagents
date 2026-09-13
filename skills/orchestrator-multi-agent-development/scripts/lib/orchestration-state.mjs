@@ -647,6 +647,27 @@ function assertPhaseTransition(state, numericPhase, normalizedStatus) {
         { phase: numericPhase, blockedBy },
       );
     }
+
+    // A real run (OficinaAI, 2026-09-12) had visualAudit legitimately BLOCKED
+    // (VIEWPORT_MISSING) when phase 9 closed DONE anyway: nothing here
+    // checked the phase's OWN completion gate(s) before updatePhase's gate
+    // sync loop overwrote them to match the phase's new status, silently
+    // erasing the block. Mirror the predecessor check above, but against
+    // this phase's own required gates instead of earlier phases' — a
+    // required gate not yet DONE/N/A means its own validation
+    // (updateCompletionGate: evidence, UI findings, materialization, sweep,
+    // etc.) never actually ran, so the phase cannot be DONE either.
+    const openGates = completionGateForPhase(numericPhase).filter((gateId) => {
+      const gate = state.completionGates?.[gateId];
+      return gate?.required && !["DONE", "N/A"].includes(gate.status);
+    });
+    if (openGates.length > 0) {
+      throw new OrchestrationStateError(
+        "PHASE_GATE_NOT_DONE",
+        `Phase ${numericPhase} cannot be marked DONE while its own completion gate(s) ${openGates.join(", ")} are not DONE or N/A`,
+        { phase: numericPhase, blockedBy: openGates },
+      );
+    }
   }
 
   if (normalizedStatus === "RUNNING") {
@@ -2005,6 +2026,19 @@ export function updatePhase(artifactDir, phase, phaseStatus, options = {}) {
     for (const gateId of completionGateForPhase(numericPhase)) {
       const previousGate = completionGates[gateId];
       if (!previousGate.required && previousGate.status === "N/A") continue;
+      // Never let a phase transition silently overwrite a gate that was
+      // already explicitly finalized via updateCompletionGate — that call
+      // already ran the gate's own validation (evidence, UI findings,
+      // materialization report, sweep requirement, etc.); this loop has
+      // none of that context. This used to unconditionally overwrite every
+      // gate mapped to the phase, which is what let a legitimately BLOCKED
+      // visualAudit (see assertPhaseTransition's PHASE_GATE_NOT_DONE above)
+      // get silently flipped to DONE the one time that check was bypassed.
+      // Remaining reachable case: an untouched, still-PENDING/RUNNING
+      // required gate — assertPhaseTransition already refuses a DONE phase
+      // transition unless those are closed, so in practice this still only
+      // fires for non-DONE phase transitions (RUNNING/FAILED/BLOCKED).
+      if (["DONE", "BLOCKED", "FAILED", "N/A"].includes(previousGate.status)) continue;
       const gateStatus = normalizedStatus === "DONE"
         ? "DONE"
         : normalizedStatus === "RUNNING"

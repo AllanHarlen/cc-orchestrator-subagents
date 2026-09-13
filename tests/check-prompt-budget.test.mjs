@@ -24,19 +24,19 @@ test("check-prompt-budget --agent agy approves a prompt under the limit", () => 
   assert.equal(parsed.ok, true);
   assert.equal(parsed.agent, "agy");
   assert.equal(parsed.chars, 100);
-  assert.equal(parsed.advisory, false);
+  assert.equal(parsed.advisory, true);
   assert.equal(parsed.suggestedSplits, 1);
 });
 
-test("check-prompt-budget --agent agy rejects a prompt over the limit with exit 1 (hard limit)", () => {
+test("check-prompt-budget --agent agy never fails on an over-limit prompt (advisory since bridge 4.4.0 stdin transport, exit 0)", () => {
   const result = run(["--agent", "agy", "--stdin"], "a".repeat(24_001));
-  assert.equal(result.status, 1);
-  const parsed = JSON.parse(result.stdout || result.stderr);
-  assert.equal(parsed.ok, false);
-  assert.equal(parsed.error.code, "PROMPT_OVER_LIMIT");
-  assert.equal(parsed.error.details.agent, "agy");
-  assert.equal(parsed.error.details.overBy, 1);
-  assert.equal(parsed.error.details.suggestedSplits, 2);
+  assert.equal(result.status, 0, result.stderr);
+  const parsed = JSON.parse(result.stdout);
+  assert.equal(parsed.agent, "agy");
+  assert.equal(parsed.advisory, true);
+  assert.equal(parsed.ok, false, "ok still reports whether the prompt is within the indicative budget");
+  assert.equal(parsed.overBy, 1);
+  assert.equal(parsed.suggestedSplits, 2);
 });
 
 test("check-prompt-budget --agent codex never fails on an over-limit prompt (advisory, exit 0)", () => {

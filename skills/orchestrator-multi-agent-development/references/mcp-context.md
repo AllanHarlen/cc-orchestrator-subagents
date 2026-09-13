@@ -163,31 +163,41 @@ Executor sem acesso ao CBM_MCP não recebe esse bloco — instrução para ferra
 
 Com `checks.optional.mcp.context7.ok` em `true`, informe ao usuário, na Fase 0, que **documentação atual será exigida nos prompts dos subagentes**: toda task que envolva biblioteca, framework, SDK, API ou serviço de nuvem vai carregar a instrução de consultar a documentação antes de escrever código. Uma menção por Run é suficiente.
 
+### Quando usar e quando NÃO usar (filtros de escopo)
+
+- **Usar para:** sintaxe de APIs externas, assinaturas de métodos, configurações de libs/frameworks, CLIs de ferramentas e migrações de versão.
+- **NÃO usar para:** lógica de negócio interna da aplicação, refatoração de código local do repositório, scripts utilitários simples sem bibliotecas ou code review geral.
+
 ### Resolver identificador antes de pedir documentação
 
 A ordem é sempre a mesma, e não tem atalho:
 
 ```text
 1. resolver o identificador da biblioteca (nome livre -> identificador do Context7)
-2. pedir a documentação desse identificador
+2. pedir a documentação desse identificador (escopada a um único conceito)
 3. escrever código que usa a biblioteca
 ```
 
-Nunca pule o passo 1, nem quando você "já sabe" o identificador de uma consulta anterior no mesmo projeto: nome de pacote e identificador do servidor não são a mesma coisa, e pedir documentação de identificador inventado devolve conteúdo errado ou vazio. Isso vale para consulta feita pelo Orquestrador e para consulta feita por subagente.
+1. **Pontuação oficial no nome:** Passe a biblioteca com pontuação e maiúsculas oficiais (ex.: `Next.js` em vez de `nextjs`, `ASP.NET Core` em vez de `aspnetcore`, `Three.js` em vez de `threejs`).
+2. **Versão canônica no ID:** Se `resolve-library-id` listar `Versions` compatíveis com a versão fixada no projeto (`package.json`, `*.csproj`, lockfile), use diretamente o identificador versionado no formato `/org/project/version` (ex.: `/vercel/next.js/v14.2.0`). Documentação de major diferente é a causa mais comum de API inexistente em código gerado.
+3. **Escopo atômico (Single-Concept Scoping):** Em `query-docs`, faça cada busca focada em um único conceito específico (ex.: "Fastify JWT cookie authentication plugin"). **Não misture** múltiplos tópicos na mesma consulta (ex.: "rotas, auth e banco no Fastify"), pois queries compostas diluem o ranking semântico e trazem respostas rasas.
+4. **Limite de chamadas:** No máximo 3 consultas ao Context7 por tarefa. Se não resolver após 3 tentativas, adote a melhor resposta obtida ou caia para os padrões locais.
 
-Quando a task fixa versão (`package.json`, `*.csproj`, lockfile), passe a versão na consulta: documentação de major diferente é a causa mais comum de API inexistente em código gerado.
+Nunca pule o passo 1, nem quando você "já sabe" o identificador de uma consulta anterior no mesmo projeto: nome de pacote e identificador do servidor não são a mesma coisa, e pedir documentação de identificador inventado devolve conteúdo errado ou vazio. Isso vale para consulta feita pelo Orquestrador e para consulta feita por subagente.
 
 ### Instrução nos prompts de subagente
 
-Task que envolve biblioteca, framework, SDK, API ou serviço de nuvem, com o Context7_MCP disponível, recebe no prompt:
+Task que envolve biblioteca, framework, SDK, API ou serviço de nuvem, com o Context7_MCP disponível, recebe no prompt (ver template em `references/subagent-prompts.md`):
 
 ```text
 Documentação atual por MCP (context7):
-- Antes de escrever código que usa <biblioteca>, resolva o identificador dela e busque a
-  documentação da versão usada por este projeto.
+- Antes de escrever código que usa <biblioteca>, resolva o identificador dela usando o nome oficial pontuado (ex: 'Next.js').
+- Se houver versão correspondente em Versions, use o ID '/org/project/version'.
+- Faça query-docs escopada a UM ÚNICO conceito por vez (Single-Concept Scoping; não misture tópicos na mesma busca).
+- Limite de no máximo 3 consultas por tarefa. Se não resolver, siga os padrões locais do projeto.
 - Não invente assinatura, opção de configuração nem nome de API a partir de memória.
-- Se a documentação divergir do padrão já presente no projeto, siga o projeto e registre
-  a divergência no retorno.
+- Não use Context7 para lógica de negócio do projeto ou funções locais.
+- Se a documentação divergir do padrão já presente no projeto, siga o projeto e registre a divergência no retorno.
 ```
 
 Sem o Context7_MCP, o prompt instrui o Executor a **seguir os padrões já presentes no projeto** — imports, wrappers, versão do manifest, exemplos existentes — em vez de improvisar API, e a limitação é registrada em `report/workflow-log.md`.
@@ -231,5 +241,6 @@ Nunca registre conteúdo bruto de resposta de MCP, conteúdo de arquivo de confi
 - [ ] Lacuna de cobertura: arquivo lido antes de afirmar ausência.
 - [ ] Fato `GRAPH` gravado com `projectId` e `queriedAt`, sempre acompanhado de `FILE`/`CONTRACT`/`TEST`/`RUN_EVENT`.
 - [ ] Prompt de subagente com bloco de grafo só quando o Executor tem acesso ao CBM_MCP.
-- [ ] Identificador da biblioteca resolvido antes de pedir documentação, sempre.
+- [ ] Identificador da biblioteca resolvido antes de pedir documentação, sempre com pontuação oficial.
+- [ ] ID canônico versionado (`/org/project/version`) e consultas com Single-Concept Scoping (máx 3).
 - [ ] Chave de API do Context7 fora de prompt, artefato e telemetria.

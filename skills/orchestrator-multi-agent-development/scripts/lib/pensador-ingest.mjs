@@ -112,7 +112,18 @@ export function inspectVisualHandoff(handoff, handoffPath) {
       ? ["design-contract.json", "tokens.css", "DESIGN.md", artifact.assetsManifest ?? "assets/manifest.json"]
       : ["tokens.css", "DESIGN.md"];
     if (variant === "legacy-verbatim") {
-      findings.push({ severity: "warning", code: "LEGACY_VERBATIM_DESIGN", path: artifact.path, message: "Handoff has no variant; reinforced visual gates are required." });
+      // Blocking when the upstream handoff claims status: DONE — the Pensador's
+      // own gate (cc-pensador >= 2.25.0, validateVisualCompleteness()) now
+      // refuses to emit DONE with an unresolved design package, so a DONE
+      // handoff reaching this point with legacy-verbatim only happens from a
+      // stale/pre-fix producer version. A real run (OficinaAI, 2026-09-12)
+      // materialized exactly this — legacy-verbatim, status DONE, no waiver —
+      // as a mere warning, and the Fase 4.0 gate let front-end tasks dispatch
+      // against a design package that was never audited or completed.
+      // PARTIAL/BLOCKED already carries a mandatory summary disclosing the
+      // gap (handoff-validator.mjs), so it stays informative there.
+      const severity = handoff?.status === "DONE" ? "high" : "warning";
+      findings.push({ severity, code: "LEGACY_VERBATIM_DESIGN", path: artifact.path, message: "Handoff has no variant; reinforced visual gates are required." });
     } else {
       if (artifact.authoritative !== true) findings.push({ severity: "high", code: "DESIGN_NOT_AUTHORITATIVE", path: artifact.path });
       if (artifact.validation?.status !== "PASS") findings.push({ severity: "high", code: "DESIGN_AUDIT_NOT_PASS", path: artifact.path });

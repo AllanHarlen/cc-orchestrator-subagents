@@ -388,28 +388,34 @@ Example of minimum baseline:
 }
 ```
 
-## AGY Prompt Limit — CLI Limitation on Windows
+## AGY Prompt Budget — Indicative, Not a CLI Limitation
 
-The AGY CLI is invoked via `child_process` by the plugin bridge. On Windows, Node.js passes the prompt as a command-line argument, applying automatic quoting: each `"` becomes `\"` and each `\` doubles.
+The AGY CLI is invoked via `child_process` by the plugin bridge. On Windows, Node.js passes an
+argv-based prompt as a command-line argument with automatic quoting (each `"` becomes `\"`, each
+`\` doubles), which used to break near ~29,140 real chars (`ENAMETOOLONG`).
 
-Results from empirical tests:
+Since cc-antigravity-plugin **4.4.0**, that ceiling no longer applies: the bridge streams the final
+prompt to AGY over stdin whenever it exceeds the platform's safe argv size (8,191 chars on Windows,
+100,000 elsewhere), so headless dispatch never drops inline context for size. A design system
+package handed to the bridge via `--design-system <dir>` is inlined in full regardless of size,
+outside this budget entirely.
 
-| Content Type | Max Prompt | Break Point |
-|---|---|---|
-| Plain text (xxx...) | 32,694 chars | 32,695 → `ENAMETOOLONG` |
-| Real prompt (quotes, `\`, XML, `\n`) | ~28,520 chars | ~29,140 → `ENAMETOOLONG` |
+`check-prompt-budget.mjs` still measures the persisted task body against a **24,000-char
+indicative threshold** (`advisory: true` for every agent, never blocks). It stays useful as a
+quality signal — a task body that large usually means poorly scoped work — but `ok: false` no
+longer requires a split before dispatch. When the check flags a task and it genuinely benefits from
+splitting:
 
-**Conservative threshold adopted: 28,000 chars.**
+1. Divide the task's deliverables into two independent groups (A and B).
+2. Create subtasks `<ID>-a` and `<ID>-b`, each covering one group.
+3. Update `plan/tasks-classification.md` and `plan/waves.md`.
+4. Reassemble the two prompts and confirm each is below the threshold.
+5. Record the split in `run/monitoring.md` and `report/workflow-log.md` with original size and reason.
 
-Before delegating any task to AGY, the orchestrator assembles the complete prompt and counts the characters. If it exceeds 28,000 chars:
-
-1. Divides the task's deliverables into two independent groups (A and B).
-2. Creates subtasks `<ID>-a` and `<ID>-b`, each covering one group.
-3. Updates `plan/tasks-classification.md` and `plan/waves.md`.
-4. Reassembles the two prompts and validates that each is below the limit.
-5. Records the split in `run/monitoring.md` and `report/workflow-log.md` with original size and reason.
-
-If the task is monolithic and indivisible by deliverables, the orchestrator tries to reduce `Relevant files and modules` and, as a last resort, records `promptOverflow: true` and requests user decision.
+If the task is monolithic and indivisible by deliverables, the orchestrator trims `Relevant files
+and modules` to the essentials and, as a last resort, records `promptOverflow: true` as a quality
+note in `plan/tasks-classification.md` — there is no user decision to request here anymore, since
+dispatch is not blocked.
 
 ## Quota Policy
 

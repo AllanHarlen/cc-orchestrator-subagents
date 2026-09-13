@@ -30,6 +30,8 @@ import {
 import {
   initRun,
   loadRun,
+  sweepStalledTasks,
+  updateCompletionGate,
   updatePhase,
   updateTaskStatus,
 } from "../skills/orchestrator-multi-agent-development/scripts/lib/orchestration-state.mjs";
@@ -58,10 +60,26 @@ function fixture() {
   initRun({ projectRoot: root, artifactDir, slug: "learning-run", runId: "learning-run-001" });
   // assertPhaseTransition (Achado 1) exige todo predecessor fechado antes da
   // Fase 12 poder abrir RUNNING; runLearningPhase() faz exatamente essa
-  // chamada internamente.
-  for (const phase of [1, 2, 3, 4, 5, 6, 7, 8, 9, 9.5, 10, 11]) {
+  // chamada internamente. Tambem exige (PHASE_GATE_NOT_DONE) que os gates
+  // proprios de cada fase ja estejam fechados: BACKEND_ONLY torna apenas
+  // monitoring (sempre required) e backendReview (ha task de back-end)
+  // required de verdade; os demais (frontendReview/visualAudit/browserE2E/
+  // visualMaterialization) ficam N/A automaticamente.
+  for (const phase of [1, 2, 3, 4, 5]) {
     updatePhase(artifactDir, phase, "DONE", { projectRoot: root, evidence: `test:${phase}:DONE` });
   }
+  sweepStalledTasks(artifactDir, { projectRoot: root });
+  updateCompletionGate(artifactDir, "monitoring", "DONE", { projectRoot: root, evidence: ["manual"] });
+  updatePhase(artifactDir, 6, "DONE", { projectRoot: root, evidence: "test:6:DONE" });
+  updateCompletionGate(artifactDir, "backendReview", "DONE", { projectRoot: root, evidence: ["manual"] });
+  for (const phase of [7, 8, 9, 9.5]) {
+    updatePhase(artifactDir, phase, "DONE", { projectRoot: root, evidence: `test:${phase}:DONE` });
+  }
+  updateCompletionGate(artifactDir, "reports", "DONE", { projectRoot: root, evidence: ["manual"] });
+  updateCompletionGate(artifactDir, "handoff", "DONE", { projectRoot: root, evidence: ["manual"] });
+  updatePhase(artifactDir, 10, "DONE", { projectRoot: root, evidence: "test:10:DONE" });
+  updateCompletionGate(artifactDir, "delivery", "DONE", { projectRoot: root, evidence: ["manual"] });
+  updatePhase(artifactDir, 11, "DONE", { projectRoot: root, evidence: "test:11:DONE" });
   updateTaskStatus(artifactDir, "BE-01", "RUNNING", {
     projectRoot: root,
     executor: "codex",

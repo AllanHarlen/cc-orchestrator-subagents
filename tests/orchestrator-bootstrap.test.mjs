@@ -38,13 +38,20 @@ function writeResolvedHandoff(root, slug = "oficina") {
   mkdirSync(join(resolved, "preview"), { recursive: true });
   writeFileSync(join(resolved, "preview", "index.html"), "<main>Preview</main>\n");
   writeFileSync(join(resolved, "assets", "generated", "service.webp"), asset);
+  writeFileSync(join(resolved, "assets", "generated", "hero.webp"), asset);
   writeFileSync(join(resolved, "assets", "manifest.json"), JSON.stringify({
     schemaVersion: 1,
     assets: [{
-      id: "service", classification: "required", requirementRefs: ["RF-001"], routes: ["/services"],
+      id: "service", purpose: "seed-demo", classification: "required", requirementRefs: ["RF-001"], routes: ["/services"],
       componentSlot: "services.card.image", file: "generated/service.webp", aspectRatio: "4:3",
       alt: "Servico automotivo", materializeInto: "apps/web/public/assets/service.webp",
       seedBindings: ["ServicoFixo:Alinhamento"], approval: "approved",
+      sha256: createHash("sha256").update(asset).digest("hex"), generator: { agent: "agy" },
+    }, {
+      id: "hero", purpose: "content", classification: "required", requirementRefs: ["RF-002"], routes: ["/"],
+      componentSlot: "home.hero.image", file: "generated/hero.webp", aspectRatio: "16:9",
+      alt: "Oficina em operacao", materializeInto: "apps/web/public/assets/hero.webp",
+      seedBindings: [], approval: "approved",
       sha256: createHash("sha256").update(asset).digest("hex"), generator: { agent: "agy" },
     }],
   }, null, 2));
@@ -96,6 +103,26 @@ test("materializer copies only the authoritative resolved package and its declar
   const applied = materializeVisualHandoff({ projectRoot: root, handoffPath, apply: true });
   assert.equal(applied.status, "PASS");
   assert.equal(readFileSync(join(root, "apps/web/public/assets/service.webp"), "utf8"), "image-content");
+  assert.equal(readFileSync(join(root, "apps/web/public/assets/hero.webp"), "utf8"), "image-content");
   assert.equal(readFileSync(join(root, "apps/web/styles/design-systems/agentic/tokens.css"), "utf8"), ":root{}\n");
+  const assetOperation = applied.operations.find((operation) => operation.type === "asset" && operation.id === "service");
+  assert.deepEqual(assetOperation.seedBindings, ["ServicoFixo:Alinhamento"]);
+  assert.equal(assetOperation.destination, join(root, "apps/web/public/assets/service.webp"));
+  assert.equal(assetOperation.applied, true);
+  const staticOperation = applied.operations.find((operation) => operation.type === "asset" && operation.id === "hero");
+  assert.deepEqual(staticOperation.seedBindings, []);
+  assert.equal(staticOperation.applied, true);
 });
 
+test("materializer rejects a seed/demo image without seedBindings but accepts static required imagery", () => {
+  const root = fixture();
+  const { handoffPath, resolved } = writeResolvedHandoff(root, "seed-bindings");
+  const manifestPath = join(resolved, "assets", "manifest.json");
+  const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+  manifest.assets.find((asset) => asset.id === "service").seedBindings = [];
+  writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
+
+  const result = materializeVisualHandoff({ projectRoot: root, handoffPath, apply: false });
+  assert.equal(result.status, "BLOCKED");
+  assert.ok(result.findings.some((finding) => finding.code === "ASSET_BINDING_INCOMPLETE" && finding.assetId === "service"));
+});

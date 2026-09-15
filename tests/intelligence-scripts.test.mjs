@@ -106,6 +106,7 @@ test("project, contract, API/UI, wire-format and test-result inspections are det
 
   const contract = runScript("inspect-contract.mjs", ["--root", root, "--path", "contract.md"], root);
   assert.equal(contract.result.summary.invalid, 1);
+  assert.match(contract.result.details.contracts[0].contentSha256, /^[a-f0-9]{64}$/);
 
   const apiUi = runScript("inspect-api-ui.mjs", [
     "--root", root,

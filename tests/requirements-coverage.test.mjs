@@ -70,6 +70,16 @@ test("extractCoveredRequirementIds: accepts bracketed list syntax", () => {
   assert.deepEqual([...covered].sort(), ["RF-01", "RF-02"]);
 });
 
+test("extractCoveredRequirementIds: accepts domain-qualified RF ids without losing legacy ids", () => {
+  const covered = extractCoveredRequirementIds("requirementIds: RF-01, RF-PLAT-01, rf-auth-06");
+  assert.deepEqual([...covered], ["RF-01", "RF-PLAT-01", "RF-AUTH-06"]);
+});
+
+test("extractCoveredRequirementIds: accepts an alphabetic suffix on a domain RF id", () => {
+  const covered = extractCoveredRequirementIds("requirementIds: RF-OS-02, rf-os-02a");
+  assert.deepEqual([...covered], ["RF-OS-02", "RF-OS-02A"]);
+});
+
 test("extractCoveredRequirementIds: accepts requirementIds: with = separator", () => {
   const covered = extractCoveredRequirementIds("requirementIds = RF-05");
   assert.deepEqual([...covered], ["RF-05"]);
@@ -93,6 +103,15 @@ test("computeRequirementsCoverage: complete when every RF has at least one cover
   assert.equal(coverage.totalRequirements, 3);
   assert.deepEqual(coverage.uncoveredRequirementIds, []);
   assert.deepEqual([...coverage.coveredRequirementIds].sort(), ["RF-01", "RF-02", "RF-03"]);
+});
+
+test("computeRequirementsCoverage: compares domain-qualified ids case-insensitively", () => {
+  const coverage = computeRequirementsCoverage(
+    { requirements: [{ id: "RF-PLAT-01" }, { id: "RF-AUTH-06" }] },
+    "requirementIds: rf-plat-01, RF-AUTH-06",
+  );
+  assert.equal(coverage.complete, true);
+  assert.deepEqual(coverage.coveredRequirementIds, ["RF-PLAT-01", "RF-AUTH-06"]);
 });
 
 test("computeRequirementsCoverage: degrades (applicable: false, complete: true) when requirementsIndex is null — Spec mode / old handoff", () => {

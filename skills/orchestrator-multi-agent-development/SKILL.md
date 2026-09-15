@@ -310,7 +310,7 @@ Em stacks C# + TypeScript, destaque explicitamente:
 - [ ] cada fase, dispatch, heartbeat relevante e resultado terminal persistido por `orchestration-state.mjs`
 - [ ] tasks interrompidas/reabertas foram marcadas `UNKNOWN` e reconciliadas antes de qualquer reexecucao
 - [ ] `STALLED` foi decidido por ausencia de progresso, com grace period, nao por duracao total da task
-- [ ] completion gates aplicaveis (`monitoring`, `backendReview`, `frontendReview`, `browserE2E`, `reports`, `handoff`, `delivery`, `learning`) estao `DONE` com evidence IDs; gates N/A possuem motivo e nunca substituem gate obrigatorio
+- [ ] completion gates aplicaveis (`visualMaterialization`, `contractsInspected`, `infraSmokeTest`, `monitoring`, `backendReview`, `frontendReview`, `visualAudit`, `browserE2E`, `reports`, `handoff`, `delivery`, `learning`, `requirementsCoverage`) estao `DONE` com evidence IDs; gates N/A possuem motivo e nunca substituem gate obrigatorio
 - [ ] cancelamento, quando solicitado, interrompeu/reconciliou executores e terminalizou tasks antes da run; nenhuma run `CANCELLED` preserva executor `RUNNING`
 - [ ] Node.js >= 22.13 e SQLite FTS5 foram confirmados pelo preflight
 - [ ] `.orchestrator/project-memory.md` foi inicializado/auditado e carregado antes da classificacao; contem somente fatos VALIDATED com fonte permitida
@@ -331,6 +331,7 @@ Em stacks C# + TypeScript, destaque explicitamente:
 - [ ] prompts AGY de implementacao com `--mode accept-edits --format stream-json --model <agyModel>` coerente com override ou heuristica
 - [ ] prompts persistidos em `run/prompts/` e verificados com `check-prompt-budget.mjs` antes da delegacao (indicativo — um `ok: false` e sinal para revisar o recorte da task, nao bloqueio); pacote de design system foi entregue via `--design-system <materializeInto>`, nao colado em `--priority-files`
 - [ ] tasks AGY com dois ou mais entregaveis independentes registram `agyParallel` e `agyParallelSource`
+- [ ] Fase 4 fechou `contractsInspected` para todos os arquivos de `contracts/` e, em run com back-end + front-end, `infraSmokeTest` com evidencia real `PASS` antes de qualquer dispatch
 - [ ] `agySubagentModel` (quando diferente de `inherit`) e alias ou slug dinamico seguro aceito pelo bridge
 - [ ] bloqueios de sandbox Codex tratados como `BLOCKED` com evidencia
 - [ ] validacao de wire format e serializacao registrada

@@ -113,12 +113,16 @@ function completeRun(root, artifactDir) {
   writeFileSync(join(artifactDir, "design-materialization.json"), JSON.stringify({
     status: "PASS", applied: true, degraded: false, findings: [], operations: [],
   }), "utf8");
+  writeFileSync(join(artifactDir, "evidence", "infra-smoke-test.json"), JSON.stringify({
+    kind: "infra-smoke-test", schemaVersion: 1, status: "PASS", applicable: true, durationMs: 1,
+  }), "utf8");
   // GATE_MONITORING_REQUIRES_SWEEP: fechar o gate monitoring exige que o
   // sweep de stall tenha rodado ao menos uma vez (lifecycle.lastSweepAt).
   sweepStalledTasks(artifactDir, { projectRoot: root });
   for (const gateId of [
     "monitoring",
     "visualMaterialization",
+    "infraSmokeTest",
     "backendReview",
     "frontendReview",
     "browserE2E",
@@ -488,6 +492,8 @@ test("resume advances past a durably completed phase", () => {
   }
   writeFileSync(join(artifactDir, "design-materialization.json"), JSON.stringify({ status: "PASS", applied: true, findings: [] }), "utf8");
   updateCompletionGate(artifactDir, "visualMaterialization", "DONE", { projectRoot: root, evidence: ["file:design-materialization.json"] });
+  writeFileSync(join(artifactDir, "evidence", "infra-smoke-test.json"), JSON.stringify({ kind: "infra-smoke-test", schemaVersion: 1, status: "PASS", applicable: true }), "utf8");
+  updateCompletionGate(artifactDir, "infraSmokeTest", "DONE", { projectRoot: root });
   updatePhase(artifactDir, 4, "DONE", { projectRoot: root, evidence: "test:4:DONE" });
   updatePhase(artifactDir, 5, "DONE", { projectRoot: root, evidence: "test:5:DONE" });
   sweepStalledTasks(artifactDir, { projectRoot: root });
@@ -778,6 +784,8 @@ test("resume follows the explicit phase sequence after browser E2E", () => {
   }
   writeFileSync(join(artifactDir, "design-materialization.json"), JSON.stringify({ status: "PASS", applied: true, findings: [] }), "utf8");
   updateCompletionGate(artifactDir, "visualMaterialization", "DONE", { projectRoot: root, evidence: ["file:design-materialization.json"] });
+  writeFileSync(join(artifactDir, "evidence", "infra-smoke-test.json"), JSON.stringify({ kind: "infra-smoke-test", schemaVersion: 1, status: "PASS", applicable: true }), "utf8");
+  updateCompletionGate(artifactDir, "infraSmokeTest", "DONE", { projectRoot: root });
   updatePhase(artifactDir, 4, "DONE", { projectRoot: root, evidence: "test:4:DONE" });
   updatePhase(artifactDir, 5, "DONE", { projectRoot: root, evidence: "test:5:DONE" });
   sweepStalledTasks(artifactDir, { projectRoot: root });

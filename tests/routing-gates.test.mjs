@@ -75,6 +75,43 @@ test("routing validation accepts the same task IDs the State Engine accepts", ()
   assert.match(result.output, /passed for 2 task\(s\)/);
 });
 
+test("prose mentioning a business ID and a task dependency does not split the routing block", () => {
+  const { artifactDir } = fixture({
+    "tasks-classification.md": [
+      "# Classificacao", "", "## FE-04 - Formulario de veiculo",
+      "- categoria: FRONTEND_ONLY",
+      "O usuario informa o ID do veiculo (FE-04 depende disso)",
+      "- assignedAgent: `cc-antigravity-plugin:antigravity-coder`",
+      "- agyModel: `flash-high`", "- agyModelSource: `heuristic`",
+    ].join("\n"),
+    "waves.md": [
+      "# Waves", "", "## Wave 1",
+      "- FE-04 -> `cc-antigravity-plugin:antigravity-coder` --model `flash-high` --format stream-json agyModelSource: `heuristic` (FRONTEND_ONLY)",
+    ].join("\n"),
+  });
+  const result = runValidator(artifactDir);
+  assert.equal(result.status, 0, result.output);
+  assert.match(result.output, /passed for 1 task\(s\)/);
+});
+
+test("real ID field labels still open task blocks", () => {
+  for (const label of ["- ID: BE-01", "**ID:** BE-01"]) {
+    const { artifactDir } = fixture({
+      "tasks-classification.md": [
+        "# Classificacao", "", label, "- categoria: BACKEND_ONLY",
+        "- assignedAgent: `codex:codex-rescue` --effort medium",
+        "- codexModel: `gpt-5.6-terra`", "- codexModelSource: `heuristic`",
+      ].join("\n"),
+      "waves.md": [
+        "# Waves", "", "## Wave 1",
+        "- BE-01 -> `codex:codex-rescue` --effort medium codexModel: `gpt-5.6-terra` codexModelSource: `heuristic` (BACKEND_ONLY)",
+      ].join("\n"),
+    });
+    const result = runValidator(artifactDir);
+    assert.equal(result.status, 0, `${label}\n${result.output}`);
+  }
+});
+
 test("an AGY model name in a routing table is not mistaken for a task", () => {
   const { root, artifactDir } = fixture({
     "tasks-classification.md": [

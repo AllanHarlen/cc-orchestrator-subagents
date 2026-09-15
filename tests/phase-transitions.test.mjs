@@ -38,6 +38,8 @@ function closeThroughPhase8(root, artifactDir) {
   for (const phase of [1, 2, 3]) updatePhase(artifactDir, phase, "DONE", { projectRoot: root, evidence: `t${phase}` });
   writeFileSync(join(artifactDir, "design-materialization.json"), JSON.stringify({ status: "PASS", applied: true, findings: [] }), "utf8");
   updateCompletionGate(artifactDir, "visualMaterialization", "DONE", { projectRoot: root, evidence: ["file:design-materialization.json"] });
+  writeFileSync(join(artifactDir, "evidence", "infra-smoke-test.json"), JSON.stringify({ kind: "infra-smoke-test", schemaVersion: 1, status: "PASS", applicable: true }), "utf8");
+  updateCompletionGate(artifactDir, "infraSmokeTest", "DONE", { projectRoot: root });
   updatePhase(artifactDir, 4, "DONE", { projectRoot: root, evidence: "t4" });
   updatePhase(artifactDir, 5, "DONE", { projectRoot: root, evidence: "t5" });
   sweepStalledTasks(artifactDir, { projectRoot: root });
@@ -67,6 +69,10 @@ function closePhasesThrough(root, artifactDir, maxPhase) {
     if (phase === 4 && required("visualMaterialization")) {
       writeFileSync(join(artifactDir, "design-materialization.json"), JSON.stringify({ status: "PASS", applied: true, findings: [] }), "utf8");
       updateCompletionGate(artifactDir, "visualMaterialization", "DONE", { projectRoot: root, evidence: ["file:design-materialization.json"] });
+    }
+    if (phase === 4 && required("infraSmokeTest")) {
+      writeFileSync(join(artifactDir, "evidence", "infra-smoke-test.json"), JSON.stringify({ kind: "infra-smoke-test", schemaVersion: 1, status: "PASS", applicable: true }), "utf8");
+      updateCompletionGate(artifactDir, "infraSmokeTest", "DONE", { projectRoot: root });
     }
     if (phase === 6 && required("monitoring")) {
       sweepStalledTasks(artifactDir, { projectRoot: root });

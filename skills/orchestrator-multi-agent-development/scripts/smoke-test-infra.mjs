@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 
 import { execSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import process from "node:process";
 
 import { parseArgs } from "./lib/cli-utils.mjs";
+import { artifactTreePath } from "./lib/artifact-layout.mjs";
 
 export const DEFAULT_COMPOSE_LOCATIONS = Object.freeze([
   "docker-compose.yml",
@@ -32,17 +33,49 @@ export function findComposeFile(rootDir = process.cwd(), explicitPath = undefine
   return null;
 }
 
-export function runInfraSmokeTest({
+export function parseComposePs(output) {
+  const text = String(output ?? "").trim();
+  if (!text) return [];
+  const parsed = text.startsWith("[")
+    ? JSON.parse(text)
+    : text.split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line));
+  return Array.isArray(parsed) ? parsed : [parsed];
+}
+
+async function probeHealthUrl(url, timeoutMs, fetchFn, waitFn) {
+  const deadline = Date.now() + timeoutMs;
+  let lastError = "Health endpoint did not return a successful response";
+  let attempts = 0;
+  do {
+    attempts += 1;
+    const remaining = Math.max(1, deadline - Date.now());
+    try {
+      const response = await fetchFn(url, { signal: AbortSignal.timeout(Math.min(5_000, remaining)) });
+      if (response.ok) return { ok: true, status: response.status, attempts };
+      lastError = `HTTP ${response.status}`;
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
+    }
+    if (Date.now() < deadline) await waitFn(Math.min(1_000, Math.max(1, deadline - Date.now())));
+  } while (Date.now() < deadline);
+  return { ok: false, error: lastError, attempts };
+}
+
+export async function runInfraSmokeTest({
   rootDir = process.cwd(),
   composeFile = undefined,
   timeoutMs = 120_000,
   healthUrl = undefined,
   dryRun = false,
   execFn = execSync,
+  fetchFn = globalThis.fetch,
+  waitFn = (milliseconds) => new Promise((resolveWait) => setTimeout(resolveWait, milliseconds)),
 } = {}) {
+  const base = { kind: "infra-smoke-test", schemaVersion: 1 };
   const resolvedCompose = findComposeFile(rootDir, composeFile);
   if (!resolvedCompose) {
     return {
+      ...base,
       status: "SKIPPED",
       applicable: false,
       reason: "NO_DOCKER_COMPOSE_FOUND",
@@ -53,6 +86,7 @@ export function runInfraSmokeTest({
 
   if (dryRun) {
     return {
+      ...base,
       status: "PASS",
       applicable: true,
       composeFile: resolvedCompose,
@@ -73,6 +107,7 @@ export function runInfraSmokeTest({
     });
   } catch (err) {
     return {
+      ...base,
       status: "FAILED",
       applicable: true,
       composeFile: resolvedCompose,
@@ -83,23 +118,98 @@ export function runInfraSmokeTest({
     };
   }
 
-  let psOutput = "";
-  try {
-    psOutput = execFn(`docker compose -f "${resolvedCompose}" ps`, {
-      cwd: rootDir,
-      encoding: "utf8",
-      stdio: "pipe",
-    });
-  } catch (err) {
-    psOutput = "(failed to query ps)";
+  const statusDeadline = Date.now() + timeoutMs;
+  let services = [];
+  let unhealthy = [];
+  while (true) {
+    let psOutput;
+    try {
+      psOutput = execFn(`docker compose -f "${resolvedCompose}" ps --all --format json`, {
+        cwd: rootDir,
+        encoding: "utf8",
+        stdio: "pipe",
+      });
+    } catch (err) {
+      return {
+        ...base,
+        status: "FAILED",
+        applicable: true,
+        composeFile: resolvedCompose,
+        error: err instanceof Error ? err.message : String(err),
+        phase: "STACK_STATUS",
+        durationMs: Date.now() - startMs,
+        timestamp: new Date().toISOString(),
+      };
+    }
+
+    try {
+      services = parseComposePs(psOutput);
+    } catch (error) {
+      return {
+        ...base,
+        status: "FAILED",
+        applicable: true,
+        composeFile: resolvedCompose,
+        error: `Invalid docker compose ps JSON: ${error instanceof Error ? error.message : String(error)}`,
+        phase: "STACK_STATUS",
+        durationMs: Date.now() - startMs,
+        timestamp: new Date().toISOString(),
+      };
+    }
+    unhealthy = services.filter((service) =>
+      String(service.State ?? "").toLowerCase() !== "running" ||
+      (String(service.Health ?? "").trim() !== "" && String(service.Health).toLowerCase() !== "healthy"),
+    );
+    if (services.length > 0 && unhealthy.length === 0) break;
+
+    const terminalFailure = unhealthy.some((service) =>
+      ["dead", "exited", "paused", "removing"].includes(String(service.State ?? "").toLowerCase()) ||
+      String(service.Health ?? "").toLowerCase() === "unhealthy",
+    );
+    if (terminalFailure || Date.now() >= statusDeadline) {
+      return {
+        ...base,
+        status: "FAILED",
+        applicable: true,
+        composeFile: resolvedCompose,
+        phase: "STACK_STATUS",
+        services,
+        unhealthyServices: unhealthy.map((service) => service.Service ?? service.Name ?? "unknown"),
+        error: services.length === 0 ? "docker compose ps returned no services" : "One or more Compose services are not running and healthy",
+        durationMs: Date.now() - startMs,
+        timestamp: new Date().toISOString(),
+      };
+    }
+    await waitFn(Math.min(1_000, Math.max(1, statusDeadline - Date.now())));
+  }
+
+  let health = null;
+  if (healthUrl) {
+    health = await probeHealthUrl(healthUrl, timeoutMs, fetchFn, waitFn);
+    if (!health.ok) {
+      return {
+        ...base,
+        status: "FAILED",
+        applicable: true,
+        composeFile: resolvedCompose,
+        healthUrl,
+        health,
+        phase: "HEALTH_CHECK",
+        error: `Health check failed: ${health.error}`,
+        durationMs: Date.now() - startMs,
+        timestamp: new Date().toISOString(),
+      };
+    }
   }
 
   return {
+    ...base,
     status: "PASS",
     applicable: true,
     composeFile: resolvedCompose,
     healthUrl: healthUrl ?? null,
-    ps: psOutput.trim(),
+    health,
+    services,
     durationMs: Date.now() - startMs,
     timestamp: new Date().toISOString(),
   };
@@ -108,21 +218,35 @@ export function runInfraSmokeTest({
 export async function main(argv = process.argv.slice(2), { stdout = process.stdout } = {}) {
   const args = parseArgs(argv);
   if (args.help || args.h) {
-    stdout.write(`Usage: smoke-test-infra.mjs [--root <dir>] [--compose-file <path>] [--health-url <url>] [--dry-run] [--json]\n`);
+    stdout.write(`Usage: smoke-test-infra.mjs [--root <dir>] [--dir <run-dir>] [--compose-file <path>] [--health-url <url>] [--timeout <seconds>] [--dry-run] [--json]\n`);
     return 0;
   }
 
   const rootDir = args.root ? resolve(args.root) : process.cwd();
   const composeFile = args["compose-file"] ? String(args["compose-file"]) : undefined;
   const healthUrl = args["health-url"] ? String(args["health-url"]) : undefined;
+  const timeoutSeconds = Number(args.timeout ?? 120);
+  if (!Number.isFinite(timeoutSeconds) || timeoutSeconds <= 0) {
+    throw new Error(`--timeout must be a positive number of seconds, got ${JSON.stringify(args.timeout)}`);
+  }
   const dryRun = Boolean(args["dry-run"]);
 
-  const result = runInfraSmokeTest({
+  const result = await runInfraSmokeTest({
     rootDir,
     composeFile,
     healthUrl,
+    timeoutMs: timeoutSeconds * 1000,
     dryRun,
   });
+
+  if (args.dir) {
+    const evidenceDir = artifactTreePath(resolve(args.dir), "evidence").path;
+    mkdirSync(evidenceDir, { recursive: true });
+    const output = join(evidenceDir, "infra-smoke-test.json");
+    const temporary = `${output}.${process.pid}.tmp`;
+    writeFileSync(temporary, `${JSON.stringify(result, null, 2)}\n`, "utf8");
+    renameSync(temporary, output);
+  }
 
   if (args.json) {
     stdout.write(JSON.stringify(result, null, 2) + "\n");

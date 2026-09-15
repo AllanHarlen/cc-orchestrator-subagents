@@ -141,7 +141,11 @@ export function inspectVisualHandoff(handoff, handoffPath) {
     for (const asset of assets) {
       const source = join(packageRoot, "assets", asset.file ?? "");
       if (asset.classification === "required" && !existsSync(source)) findings.push({ severity: "critical", code: "REQUIRED_ASSET_MISSING", path: source, assetId: asset.id });
-      if (asset.classification === "required" && (!asset.alt || !asset.routes?.length || !asset.materializeInto || !asset.seedBindings?.length || !asset.sha256)) findings.push({ severity: "high", code: "ASSET_BINDING_INCOMPLETE", assetId: asset.id });
+      const seedAsset = asset.purpose === "seed-demo" || (Array.isArray(asset.seedBindings) && asset.seedBindings.length > 0);
+      const missingSeedBinding = asset.purpose === "seed-demo" && !asset.seedBindings?.length;
+      if (asset.classification === "required" && (!asset.alt || !asset.routes?.length || !asset.materializeInto || !asset.sha256 || missingSeedBinding)) {
+        findings.push({ severity: "high", code: "ASSET_BINDING_INCOMPLETE", assetId: asset.id, seedAsset });
+      }
       if (existsSync(source) && asset.sha256) {
         const actual = createHash("sha256").update(readFileSync(source)).digest("hex");
         if (actual !== asset.sha256) findings.push({ severity: "critical", code: "ASSET_HASH_MISMATCH", assetId: asset.id, path: source });

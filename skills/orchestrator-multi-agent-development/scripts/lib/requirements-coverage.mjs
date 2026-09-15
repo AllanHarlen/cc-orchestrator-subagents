@@ -29,7 +29,7 @@
  * building the task list) without that added parsing risk.
  */
 
-const RF_ID_RE = /\bRF-\d+\b/g;
+const RF_ID_RE = /\bRF-(?:[A-Z]+-)?\d+[A-Z]?\b/gi;
 
 /**
  * Extracts every requirement id (`RF-XX`) referenced by a `requirementIds`
@@ -48,7 +48,7 @@ export function extractCoveredRequirementIds(tasksClassificationMarkdown) {
   let match = fieldLineRe.exec(text);
   while (match !== null) {
     const ids = match[1].match(RF_ID_RE) ?? [];
-    for (const id of ids) covered.add(id);
+    for (const id of ids) covered.add(id.toUpperCase());
     match = fieldLineRe.exec(text);
   }
   return covered;
@@ -87,7 +87,9 @@ export function computeRequirementsCoverage(requirementsIndex, tasksClassificati
   }
 
   const covered = extractCoveredRequirementIds(tasksClassificationMarkdown);
-  const requirementIds = requirements.map((r) => r.id).filter((id) => typeof id === 'string' && id.length > 0);
+  const requirementIds = requirements
+    .map((r) => typeof r.id === 'string' ? r.id.toUpperCase() : r.id)
+    .filter((id) => typeof id === 'string' && id.length > 0);
   const uncovered = requirementIds.filter((id) => !covered.has(id));
 
   return {

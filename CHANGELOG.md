@@ -1,5 +1,49 @@
 # Changelog
 
+## [4.18.0] — 2026-09-15 — Gates de contrato/infra na Fase 4, IDs de requisito por dominio, mutacao obrigatoria na E2E
+
+Levantamento de gaps sobre uma run real do Pensador -> Orquestrador (OficinaAI, apos a 4.17.0 ja
+em producao): scripts deterministicos bem desenhados que existiam mas nunca eram executados (o
+mesmo padrao de bug ja corrigido na 4.17.0 para `updatePhase`), um regex de routing fragil e uma
+decisao de design ambigua sobre imagens de seed. Ver tambem cc-pensador 2.26.0 (metade Pensador
+das mesmas correcoes).
+
+- **`inspect-contract.mjs`/`smoke-test-infra.mjs` existiam, eram instruidos, nunca rodavam.**
+  Nenhuma das 3 invocacoes reais apareceu no transcript da run analisada; os 3 contratos que a
+  review de back-end reprovou por falta de autorizacao nao tinham nenhuma das 11 secoes que
+  `inspect-contract.mjs` exige (`Permissoes` inclusive). A secao "Early Stack Boot" do
+  `workflow.md` tambem estava fisicamente posicionada depois do ponto em que precisava ser lida
+  (sob `## Fase 7`, que so e alcancada depois de todas as waves rodarem) — movida para `### 4.3`,
+  antes de `## Fase 5`.
+  - Dois completion gates novos na Fase 4 (`contractsInspected`, `infraSmokeTest`), reaproveitando
+    o `PHASE_GATE_NOT_DONE` da 4.17.0 sem codigo novo de bloqueio. Evidencia de `contractsInspected`
+    e vinculada ao SHA-256 do conteudo atual do contrato — editar um contrato depois de
+    inspecionado invalida a evidencia, revalidado em `updatePhase`, `updateCompletionGate` e no
+    audit final.
+  - `smoke-test-infra.mjs` reescrito: faz polling real de `docker compose ps --all --format json`
+    ate todo servico ficar `running`+`healthy` (timeout, falha terminal em
+    `exited`/`dead`/`unhealthy`), sonda `--health-url` opcional com retry, e persiste o resultado
+    tipado (`kind: "infra-smoke-test"`, `schemaVersion: 1`) atomicamente em `evidence/`.
+- **`requirements-coverage.mjs`:** `RF_ID_RE` so casava `RF-\d+`; o `requirements.json` real usa
+  `RF-<DOMINIO>-NN` (inclusive sufixo alfabetico, `RF-OS-02a`) — reportava falso-negativo "58 de
+  58 sem cobertura", ja documentado e contornado manualmente numa run real
+  (`SendFeedback` rascunhado, nunca enviado). Regex ampliado, comparacao case-insensitive.
+- **`validate-routing.mjs`:** `extractBlocks()` tratava qualquer linha contendo a palavra "ID" em
+  qualquer posicao como abertura de bloco novo — uma frase de prosa como "O usuario informa o ID
+  do veiculo (FE-04 depende disso)" reabria um bloco no meio da descricao de outra task,
+  corrompendo o parsing de `tasks-classification.md`/`waves.md` silenciosamente. Restrito a rotulo
+  de campo real (`ID:`/`**ID:**` no inicio da linha).
+- **Fase 9.5 (E2E):** passa a exigir pelo menos um fluxo de mutacao completo do dominio central
+  (criar -> decidir/aprovar -> efeito colateral observavel) — uma review real encontrou IDOR que
+  so apareceria exercitando esse fluxo de verdade, nao so lendo o controller. Tambem passa a
+  verificar mecanicamente `<img src>` nao vazio em toda rota que o PRD/CA descreve como tendo
+  imagem (tokens computados e placeholders CSS nao contam).
+- **Imagens de seed/demo:** `pensador-ingest.mjs` distingue asset `purpose: "seed-demo"` (exige
+  `seedBindings` nao vazio) de asset estatico de conteudo (`seedBindings: []` legitimo) — mesma
+  distincao aplicada em paralelo no `design-package.mjs` do cc-pensador. A materializacao
+  (`materialize-visual-handoff.mjs`) propaga cada `seedBinding` no relatorio de operacoes para a
+  task de seed correspondente aplicar e confirmar no browser.
+
 ## [4.17.0] — 2026-09-13 — `updatePhase` nao pisa mais em gate proprio aberto
 
 O usuario ja tinha rascunhado esse bug report na propria run analisada: "`orchestration-state.mjs

@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   closeSync,
   existsSync,
@@ -21,6 +21,7 @@ import {
   ARTIFACT_LAYOUT_VERSION,
   SUPPORTED_ARTIFACT_LAYOUT_VERSIONS,
   artifactExists,
+  artifactTreePath,
   currentRunsRoot,
   ensureArtifactLayout,
   resolveArtifact,
@@ -138,6 +139,8 @@ export const COMPLETION_GATE_DEFINITIONS = Object.freeze({
   // e agora impossivel (assertPhaseTransition), e fechar a 4 sem evidencia
   // tambem (GATE_DONE_REQUIRES_EVIDENCE em updateCompletionGate).
   visualMaterialization: { phase: 4, label: "Design package materialization" },
+  contractsInspected: { phase: 4, label: "Contract completeness inspection" },
+  infraSmokeTest: { phase: 4, label: "Docker/infra early smoke test" },
   monitoring: { phase: 6, label: "Monitoring telemetry" },
   backendReview: { phase: 8, label: "Back-end review" },
   frontendReview: { phase: 9, label: "Front-end review" },
@@ -503,7 +506,7 @@ function validateCompletionGates(gates) {
     const gate = gates[gateId];
     // Legacy runs predate the semantic evidence gate. They remain readable;
     // a new run receives this gate from synchronizeCompletionGates().
-    if (!gate && gateId === "requirementsCoverage") continue;
+    if (!gate && ["requirementsCoverage", "contractsInspected", "infraSmokeTest"].includes(gateId)) continue;
     if (!gate || !GATE_STATUS_SET.has(gate.status)) {
       throw new OrchestrationStateError(
         "INVALID_COMPLETION_GATE",
@@ -1606,11 +1609,22 @@ function taskCategoryFlags(tasks) {
   return { backend, frontend };
 }
 
-function completionGateRequirements(tasks) {
+function contractFiles(artifactDir) {
+  if (!artifactDir) return [];
+  const directory = artifactTreePath(artifactDir, "contracts").path;
+  if (!existsSync(directory)) return [];
+  return readdirSync(directory, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && /\.(?:md|json)$/i.test(entry.name))
+    .map((entry) => join(directory, entry.name));
+}
+
+function completionGateRequirements(tasks, artifactDir = null) {
   const { backend, frontend } = taskCategoryFlags(tasks);
   return {
     monitoring: true,
     visualMaterialization: frontend,
+    contractsInspected: contractFiles(artifactDir).length > 0,
+    infraSmokeTest: backend && frontend,
     backendReview: backend,
     frontendReview: frontend,
     visualAudit: frontend,
@@ -1630,8 +1644,8 @@ function completionGateRequirements(tasks) {
   };
 }
 
-function synchronizeCompletionGates(previous, tasks, now) {
-  const requirements = completionGateRequirements(tasks);
+function synchronizeCompletionGates(previous, tasks, now, artifactDir = null) {
+  const requirements = completionGateRequirements(tasks, artifactDir);
   const gates = {};
   for (const [gateId, definition] of Object.entries(COMPLETION_GATE_DEFINITIONS)) {
     const existing = previous?.[gateId] ?? null;
@@ -1800,7 +1814,7 @@ export function initRun(options) {
       currentWave,
       tasks,
       waves: parsed.waves,
-      completionGates: synchronizeCompletionGates(null, tasks, now),
+      completionGates: synchronizeCompletionGates(null, tasks, now, artifactDir),
       phaseHistory: {
         [String(phase)]: {
           name: phaseName(phase),
@@ -1940,6 +1954,7 @@ export function syncRunFromArtifacts(artifactDir, options = {}) {
       state.completionGates,
       nextTasks,
       now,
+      artifactDir,
     );
     const committed = commitEvent(
       artifactDir,
@@ -1998,8 +2013,25 @@ export function updatePhase(artifactDir, phase, phaseStatus, options = {}) {
   return withLock(artifactDir, () => {
     const state = loadRun(artifactDir, { repairSnapshot: true }).state;
     assertRunMutable(state, "update a phase");
-    assertPhaseTransition(state, numericPhase, normalizedStatus);
     const now = iso(options.now);
+    const completionGates = synchronizeCompletionGates(
+      state.completionGates,
+      state.tasks,
+      now,
+      artifactDir,
+    );
+    if (normalizedStatus === "DONE") {
+      const invalidEvidence = currentGateEvidenceFindings(artifactDir, completionGates)
+        .filter((finding) => COMPLETION_GATE_DEFINITIONS[finding.id]?.phase === numericPhase);
+      if (invalidEvidence.length > 0) {
+        throw new OrchestrationStateError(
+          "PHASE_GATE_EVIDENCE_INVALID",
+          `Phase ${numericPhase} cannot be marked DONE because persisted gate evidence is missing, stale, or invalid`,
+          { phase: numericPhase, findings: invalidEvidence },
+        );
+      }
+    }
+    assertPhaseTransition({ ...state, completionGates }, numericPhase, normalizedStatus);
     const history = clone(state.phaseHistory ?? {});
     const previous = history[String(numericPhase)] ?? {};
     history[String(numericPhase)] = {
@@ -2018,11 +2050,6 @@ export function updatePhase(artifactDir, phase, phaseStatus, options = {}) {
     if (normalizedStatus === "CANCELLED") runStatus = "BLOCKED";
     assertRunTransition(state, runStatus);
 
-    const completionGates = synchronizeCompletionGates(
-      state.completionGates,
-      state.tasks,
-      now,
-    );
     for (const gateId of completionGateForPhase(numericPhase)) {
       const previousGate = completionGates[gateId];
       if (!previousGate.required && previousGate.status === "N/A") continue;
@@ -2118,6 +2145,7 @@ const GATE_ARTIFACT_CANDIDATES = Object.freeze({
   backendReview: [["review-final.md"]],
   frontendReview: [["review-frontend.md"]],
   visualMaterialization: [["design-materialization.json"]],
+  infraSmokeTest: [["infra-smoke-test.json"]],
   visualAudit: [["ui-evidence.json"]],
   browserE2E: [["browser-e2e-report.md"], ["e2e-report.md"], ["e2e-verification.md"]],
   requirementsCoverage: [["requirements-evidence.json"]],
@@ -2137,6 +2165,100 @@ function gateArtifactEvidence(artifactDir, gateId) {
     if (checked.length > 0 && checked.every((entry) => entry.exists)) return checked;
   }
   return [];
+}
+
+function normalizedEvidencePath(value) {
+  return String(value ?? "").replaceAll("\\", "/").toLowerCase();
+}
+
+function fileSha256(path) {
+  return createHash("sha256").update(readFileSync(path)).digest("hex");
+}
+
+function validateContractInspectionEvidence(artifactDir) {
+  const contracts = contractFiles(artifactDir);
+  if (contracts.length === 0) return [];
+
+  const evidenceDir = artifactTreePath(artifactDir, "evidence").path;
+  const reports = existsSync(evidenceDir)
+    ? readdirSync(evidenceDir, { withFileTypes: true })
+      .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
+      .map((entry) => join(evidenceDir, entry.name))
+      .map((path) => {
+        try {
+          const parsed = JSON.parse(readFileSync(path, "utf8"));
+          return parsed?.kind === "inspect-contract" ? { path, parsed } : null;
+        } catch {
+          return null;
+        }
+      })
+      .filter(Boolean)
+    : [];
+
+  const inspected = reports.flatMap(({ path, parsed }) =>
+    (parsed.details?.contracts ?? []).map((contract) => ({
+      ...contract,
+      evidenceId: parsed.evidenceId ?? basename(path, ".json"),
+    })),
+  );
+  const missing = contracts.filter((contractPath) => {
+    const expected = normalizedEvidencePath(relative(artifactDir, contractPath));
+    const expectedSha256 = fileSha256(contractPath);
+    return !inspected.some((entry) => {
+      const actual = normalizedEvidencePath(entry.path);
+      const sameContract = actual === expected || actual.endsWith(`/${expected}`) || expected.endsWith(`/${actual}`);
+      const justified = entry.justified === true && String(entry.justification ?? "").trim().length > 0;
+      return sameContract && entry.contentSha256 === expectedSha256 && (entry.valid === true || justified);
+    });
+  });
+  if (missing.length > 0) {
+    throw new OrchestrationStateError(
+      "CONTRACT_INSPECTION_BLOCKED",
+      `contractsInspected requires valid persisted inspect-contract evidence for every contract: ${missing.map((path) => basename(path)).join(", ")}`,
+      { missingContracts: missing.map((path) => normalizedEvidencePath(relative(artifactDir, path))) },
+    );
+  }
+  return [...new Set(inspected.map((entry) => `evidence:${entry.evidenceId}`))];
+}
+
+function validateInfraSmokeTestEvidence(artifactDir) {
+  const evidence = resolveArtifact(artifactDir, "infra-smoke-test.json");
+  if (!evidence) {
+    throw new OrchestrationStateError("INFRA_SMOKE_TEST_MISSING", "infraSmokeTest requires evidence/infra-smoke-test.json");
+  }
+  let report;
+  try {
+    report = JSON.parse(readFileSync(evidence.path, "utf8"));
+  } catch (error) {
+    throw new OrchestrationStateError("INFRA_SMOKE_TEST_INVALID", `Could not parse infra-smoke-test.json: ${error.message}`);
+  }
+  if (report.kind !== "infra-smoke-test" || report.schemaVersion !== 1 || report.status !== "PASS" || report.applicable !== true || report.dryRun === true) {
+    throw new OrchestrationStateError(
+      "INFRA_SMOKE_TEST_BLOCKED",
+      "infraSmokeTest requires a schemaVersion 1, applicable, non-dry-run smoke-test-infra.mjs result with status PASS",
+      report,
+    );
+  }
+  return `file:${evidence.relativePath}`;
+}
+
+function currentGateEvidenceFindings(artifactDir, completionGates) {
+  const findings = [];
+  for (const gateId of ["contractsInspected", "infraSmokeTest"]) {
+    const gate = completionGates?.[gateId];
+    if (!gate?.required || gate.status !== "DONE") continue;
+    try {
+      if (gateId === "contractsInspected") validateContractInspectionEvidence(artifactDir);
+      if (gateId === "infraSmokeTest") validateInfraSmokeTestEvidence(artifactDir);
+    } catch (error) {
+      findings.push({
+        id: gateId,
+        code: error instanceof OrchestrationStateError ? error.code : "GATE_EVIDENCE_INVALID",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+  return findings;
 }
 
 export function updateCompletionGate(artifactDir, gateId, status, options = {}) {
@@ -2163,6 +2285,7 @@ export function updateCompletionGate(artifactDir, gateId, status, options = {}) 
       state.completionGates,
       state.tasks,
       now,
+      artifactDir,
     );
     const definition = COMPLETION_GATE_DEFINITIONS[normalizedGateId];
     const previous = completionGates[normalizedGateId];
@@ -2228,11 +2351,17 @@ export function updateCompletionGate(artifactDir, gateId, status, options = {}) 
       );
     }
 
+    const gateValidatedEvidence = normalizedStatus === "DONE" && normalizedGateId === "contractsInspected"
+      ? validateContractInspectionEvidence(artifactDir)
+      : normalizedStatus === "DONE" && normalizedGateId === "infraSmokeTest"
+        ? [validateInfraSmokeTestEvidence(artifactDir)]
+        : [];
     const explicitEvidence = normalizeList(options.evidence) ?? [];
     const artifactEvidence = gateArtifactEvidence(artifactDir, normalizedGateId);
     const evidence = [
       ...new Set([
         ...(previous.evidence ?? []),
+        ...gateValidatedEvidence,
         ...explicitEvidence,
         ...artifactEvidence.map((entry) => `file:${entry.path}`),
       ]),
@@ -3779,6 +3908,7 @@ function completionAudit(artifactDir, state) {
     state.completionGates,
     state.tasks,
     state.updatedAt,
+    artifactDir,
   );
   const incompleteGates = Object.values(completionGates).filter((gate) =>
     gate.required ? gate.status !== "DONE" : !["DONE", "N/A"].includes(gate.status),
@@ -3786,6 +3916,7 @@ function completionAudit(artifactDir, state) {
   const gatesWithoutEvidence = Object.values(completionGates).filter(
     (gate) => gate.status === "DONE" && (gate.evidence ?? []).length === 0,
   );
+  const invalidGateEvidence = currentGateEvidenceFindings(artifactDir, completionGates);
   // A waivable gate (e.g. browserE2E) explicitly marked N/A via `--required false`
   // still means the corresponding verification never ran — it just did so with a
   // documented reason instead of silently. `incompleteGates` alone can't see this,
@@ -3836,6 +3967,7 @@ function completionAudit(artifactDir, state) {
     unresolvedScope.length === 0 &&
     incompleteGates.length === 0 &&
     gatesWithoutEvidence.length === 0 &&
+    invalidGateEvidence.length === 0 &&
     waivedGates.length === 0 &&
     invalidDelegations.length === 0 &&
     missingArtifacts.length === 0 &&
@@ -3850,6 +3982,7 @@ function completionAudit(artifactDir, state) {
     unresolvedScope: unresolvedScope.map((task) => task.id),
     incompleteGates: incompleteGates.map((gate) => ({ id: gate.id, status: gate.status })),
     gatesWithoutEvidence: gatesWithoutEvidence.map((gate) => gate.id),
+    invalidGateEvidence,
     waivedGates: waivedGates.map((gate) => ({ id: gate.id, reason: gate.reason })),
     delegatedGates: delegatedGates.map((gate) => ({
       id: gate.id,

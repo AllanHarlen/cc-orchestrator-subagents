@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
-import { existsSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 import { artifactTreePath } from "./lib/artifact-layout.mjs";
@@ -64,6 +65,7 @@ function inspect(path, relativePath) {
   if (!methodConcrete) issues.push({ code: "METHOD_NOT_CONCRETE" });
   return {
     path: relativePath,
+    contentSha256: createHash("sha256").update(readFileSync(path)).digest("hex"),
     valid: issues.length === 0,
     jsonExamples: jsonBlocks.length,
     checklistItems: checklist.length,

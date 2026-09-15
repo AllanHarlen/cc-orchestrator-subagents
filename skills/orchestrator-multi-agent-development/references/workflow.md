@@ -285,7 +285,7 @@ Quando a ingestao trouxe `design-system-files` (ou um `design-system.md` com dir
 node "${CLAUDE_SKILL_DIR}/scripts/materialize-visual-handoff.mjs" --root "." --handoff "<caminho para o handoff.json do Pensador>" --apply > ".orchestrator/runs/<nome>/design-materialization.json"
 ```
 
-- O script preserva `original/` intacto, copia apenas o pacote `resolved/` autoritativo de cada `<id>` para o alvo real (`materializeInto`, ex.: `packages/ui/design-systems/<id>/`, ou `src/styles/…` em app unico — ver `references/handoff-contract.md` secao 6), materializa cada asset e aplica `seedBindings`. Nao reescreva `tokens.css`, `DESIGN.md`, `components.html` nem `preview/`: eles sao consumidos verbatim.
+- O script preserva `original/` intacto, copia apenas o pacote `resolved/` autoritativo de cada `<id>` para o alvo real (`materializeInto`, ex.: `packages/ui/design-systems/<id>/`, ou `src/styles/…` em app unico — ver `references/handoff-contract.md` secao 6) e materializa cada asset. Ele propaga os `seedBindings` no relatorio de operacoes; para cada asset com `purpose: "seed-demo"`, o Orquestrador deve inclui-los na task de seed correspondente, aplicar cada vinculo no codigo/dado real e confirmar o resultado no browser. Assets estaticos podem ter `seedBindings: []`. Nao reescreva `tokens.css`, `DESIGN.md`, `components.html` nem `preview/`: eles sao consumidos verbatim.
 - Um `status: "BLOCKED"` no JSON gravado significa finding alto/critico no pacote (`resolved/` ausente, asset obrigatorio faltando, hash divergente, ou um handoff `status: DONE` com `design-system-files.variant: "legacy-verbatim"` — desde cc-pensador >= 2.25.0 isso e sempre um producer desatualizado, nunca uma saida valida do proprio Pensador) — corrija na origem (Pensador) antes de prosseguir; nao contorne despachando mesmo assim.
 - Feche o gate somente apos `status: "PASS"`: `gate --gate visualMaterialization --status DONE --evidence file:design-materialization.json`. **O dispatch de qualquer task front-end (Fase 5) fica bloqueado** (`assertPhaseTransition`) enquanto este gate nao fechar — isso e deliberado: um pacote de design nao materializado so aparecia antes como sintoma indireto e generico no gate visualAudit da Fase 9 (imagens quebradas/ausentes), sem apontar a causa raiz.
 - Guarde os caminhos materializados para carregar no prompt de **toda task front-end** (Fase 5) e para o gate de design da Fase 9.
@@ -302,10 +302,13 @@ Crie `.orchestrator/runs/<nome>/contracts/*.md` para:
 Valide cada contrato e o conjunto API/UI de forma deterministica:
 
 ```bash
-node "${CLAUDE_SKILL_DIR}/scripts/inspect-contract.mjs" --root "." --path ".orchestrator/runs/<nome>/contracts/<id>.md" --persist-knowledge
+node "${CLAUDE_SKILL_DIR}/scripts/inspect-contract.mjs" --root "." --dir ".orchestrator/runs/<nome>" --persist-knowledge
 node "${CLAUDE_SKILL_DIR}/scripts/inspect-api-ui.mjs" --root "." --backend <path> --frontend <path>
 node "${CLAUDE_SKILL_DIR}/scripts/validate-wire-format.mjs" --root "." --contract <path> --payload <path>
+node "${CLAUDE_SKILL_DIR}/scripts/orchestration-state.mjs" gate --dir ".orchestrator/runs/<nome>" --gate contractsInspected --status DONE
 ```
+
+`inspect-contract.mjs --dir` inspeciona todos os arquivos de `contracts/` e persiste o resultado em `evidence/`. O gate `contractsInspected` somente fecha quando cada contrato existente possui uma inspecao persistida para o SHA-256 do conteudo atual, com `valid: true` (ou uma justificativa explicita no registro); adicionar ou editar um contrato invalida a evidencia anterior antes de a Fase 4 fechar e tambem aparece no `audit` final.
 
 Todo contrato deve conter:
 
@@ -340,6 +343,20 @@ node "${CLAUDE_SKILL_DIR}/scripts/generate-contract-types.mjs" \
 ```
 
 Isso elimina alucinacoes de payload, divergencias de casing e interfaces inventadas pelos subagentes no back-end e front-end.
+
+### 4.3 Early Stack Boot / Smoke Test de Infra — gate `infraSmokeTest`
+
+Antes de abrir a Fase 5, quando a run tem back-end e front-end, execute o smoke test real da stack e persista o resultado na propria run:
+
+```bash
+node "${CLAUDE_SKILL_DIR}/scripts/smoke-test-infra.mjs" \
+  --root "." --dir ".orchestrator/runs/<nome>" \
+  [--compose-file docker-compose.yml] [--health-url http://localhost:<porta>/health] [--timeout 120] --json
+node "${CLAUDE_SKILL_DIR}/scripts/orchestration-state.mjs" gate \
+  --dir ".orchestrator/runs/<nome>" --gate infraSmokeTest --status DONE
+```
+
+O resultado fica em `evidence/infra-smoke-test.json`, identificado por `kind: "infra-smoke-test"` e `schemaVersion: 1`. Depois do `up`, o script le todos os containers por JSON estruturado, reprova servico parado ou com health negativo e, quando `--health-url` for informado, exige resposta HTTP 2xx dentro do timeout. `SKIPPED`, `FAILED`, evidencia sem esse envelope e `--dry-run` nao fecham o gate: a evidencia precisa ser aplicavel, vir de uma subida real e ter `status: "PASS"`. Isso confirma cedo imagens Docker, Dockerfiles, portas, credenciais, volumes, banco, filas e dependencias essenciais; falha aqui bloqueia a Fase 4 antes de qualquer dispatch.
 
 ## Fase 5 - Delegacao paralela
 
@@ -619,16 +636,6 @@ Grava `conversationId`/`sessionId`, `resolvedModel`, `codexEffort` efetivo, `sta
 
 ## Fase 7 - Integracao
 
-### 7.0 Early Stack Boot / Smoke Test de Infra (Wave 1)
-
-Antes de disparar a Wave 1 ou logo na inicializacao das primeiras tarefas de infraestrutura/servicos, execute o smoke test precoce da stack:
-
-```bash
-node "${CLAUDE_SKILL_DIR}/scripts/smoke-test-infra.mjs" --root "." [--compose docker-compose.yml] [--timeout 120]
-```
-
-Isso sobe os containers de banco de dados, queues e dependencias essenciais em menos de 2 minutos para confirmar que portas, credenciais e volumes funcionam de verdade. Se a infra falhar aqui, o orquestrador interrompe o processo imediatamente em vez de acumular horas de execucao para falhar na Fase 9.5.
-
 ### 7.1 Gate de Qualidade Incremental por Onda (Wave Gate)
 
 Ao final de cada wave (antes de autorizar a transicao para a wave seguinte), execute o gate deterministico de qualidade:
@@ -826,6 +833,7 @@ Isso **nao e o mesmo** que o "N/A" do paragrafo acima (front-end inexistente ou 
 1. **Suba a app de verdade** (ex.: `docker compose up --build`) e confirme os servicos saudaveis. Se subir a stack falhar, isso ja e um achado bloqueante — nao existe "APROVADO" para uma app que nao sobe.
 2. **Credenciais de seed/demo para fluxos autenticados.** Antes de tentar logar, confira se o PRD/spec documenta credenciais conhecidas de seed (ver seção "Observabilidade & Operação" do PRD). Se documentadas, use-as para exercitar os `UC-*` que exigem login. Se o ambiente tem seed/demo mas **nenhuma credencial documentada** (ex.: senha só como hash sem plaintext registrado), isso e uma lacuna real: registre-a explicitamente em `review/e2e-verification.md`, e prefira resolvê-la (redefinir a senha do seed para um valor conhecido e documentá-lo, com uma correção pela Fase 7) a simplesmente pular os fluxos autenticados. Só marque os fluxos autenticados como não verificados se resolver a credencial estiver fora do escopo da correção.
 3. **Dirija os fluxos de usuario criticos** em desktop e mobile: home publica; servicos e pecas com imagens; institucional; carrinho/checkout; login administrativo; dashboard; refresh apos login; deep link protegido; estados empty/error/loading/success. **Para o viewport mobile, prefira Playwright MCP** (`browser_resize` altera a janela real do navegador headless) **a `claude-in-chrome`**: numa run real (OficinaAI, 2026-09-12), o resize do `claude-in-chrome` retornava sucesso mas a dimensao do screenshot nunca mudava, e o gate `visualAudit` fechou `BLOCKED` por `VIEWPORT_MISSING` — corretamente, sem forjar aprovacao, mas evitavel se Playwright MCP estivesse disponivel e tivesse sido a primeira escolha. Confirme a troca de viewport comparando as dimensoes do screenshot antes de seguir (nao confie so no retorno "sucesso" da chamada de resize); se nenhuma ferramenta capaz de mudar viewport estiver disponivel, registre a limitacao explicitamente (nao invente aprovacao mobile) e marque `visualAudit` como `BLOCKED`.
+   - O roteiro obrigatoriamente inclui pelo menos um fluxo completo de mutacao do dominio central: criar -> decidir/aprovar -> confirmar um efeito colateral observavel na UI e na API. Uma navegacao apenas de leitura nao satisfaz esta fase.
 4. **Em cada fluxo, verifique:**
    - console e network **sem erros de CORS** nem `net::ERR_FAILED`;
    - cada requisicao de API retorna 2xx **e a UI reflete o dado real** — desconfie de "200 mas a tela ficou vazia/inalterada", que e o sintoma classico de casing divergente ou campo `undefined`;
@@ -833,6 +841,7 @@ Isso **nao e o mesmo** que o "N/A" do paragrafo acima (front-end inexistente ou 
    - resolucao **multi-tenant / por host** funciona a partir do browser (o front informa o tenant certo ao back);
    - estados de tela (vazio/carregando/erro/sucesso) se comportam como especificado.
    - zero imagens quebradas, todo asset requerido visivel no fluxo normal com `alt`, seed apontando para URL real e nenhum emoji usado como icone;
+   - para cada rota que o PRD/CA descreve como contendo imagem, execute `document.querySelectorAll('img[src]:not([src=""])')` (ou assercao Playwright equivalente) e registre ao menos um `<img src>` real e nao vazio no DOM; tokens computados, placeholders CSS ou a mera existencia do arquivo nao contam como imagem renderizada;
    - nenhum fallback mock silencioso, erro HTTP mascarado, token CSS indefinido ou valor visual hardcoded fora da allowlist;
    - consistencia monetaria, sessao preservada no refresh/deep link e navegacao equivalente ao design-contract.
 5. **Capture evidencia**: screenshot e/ou o resumo de console+network dos fluxos exercitados, salvos em `.orchestrator/runs/<slug>/review/e2e-verification.md` (e screenshots em `.orchestrator/runs/<slug>/review/screenshots/`).

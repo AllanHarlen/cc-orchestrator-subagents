@@ -180,6 +180,9 @@ Os gates persistidos são:
 
 | Gate | Fase | Regra |
 |---|---:|---|
+| `visualMaterialization` | 4 | obrigatório quando existe front-end; exige `design-materialization.json` com `status: PASS` |
+| `contractsInspected` | 4 | obrigatório quando existe qualquer arquivo em `contracts/`; cada contrato exige evidência válida de `inspect-contract.mjs` vinculada ao SHA-256 atual |
+| `infraSmokeTest` | 4 | obrigatório quando existem back-end e front-end; exige `evidence/infra-smoke-test.json` schema v1, aplicável, real (não dry-run) e `PASS` |
 | `monitoring` | 6 | sempre obrigatório — fecha junto com a Fase 6, exige evidência de telemetria (`run/monitoring.md` ou `--evidence`) |
 | `backendReview` | 8 | obrigatório quando existe back-end |
 | `frontendReview` | 9 | obrigatório quando existe front-end |

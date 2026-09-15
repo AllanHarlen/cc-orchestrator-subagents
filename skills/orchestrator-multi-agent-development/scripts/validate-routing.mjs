@@ -408,7 +408,7 @@ function extractBlocks(content) {
     const ids = uniqueTaskIds(line);
     const isTaskHeading = ids.length > 0 && /^#{2,6}\s+/.test(line);
     const isTaskTableRow = ids.length > 0 && /^\s*\|/.test(line);
-    const isTaskIdLine = ids.length > 0 && /\bID\b/i.test(line);
+    const isTaskIdLine = ids.length > 0 && /^\s*[-*+]?\s*(?:\*\*\s*ID\s*(?::\s*\*\*|\*\*\s*:)|ID\s*:)/i.test(line);
     const isTaskListItem = ids.length > 0 && taskListItemRe.test(line);
 
     if (isTaskTableRow) {

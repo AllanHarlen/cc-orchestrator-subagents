@@ -41,3 +41,47 @@ test("rejects commit-only evidence, mocks, missing screenshots and open high fin
   ]));
 });
 
+test("rejects a route with domain entities found in browser storage (the OficinaAI painel-data-context defect)", () => {
+  const { root, evidence } = validEvidence();
+  evidence.routes[0].storageAudit = { domainEntitiesInClientStorage: ["ordens-servico-seed", "clientes-seed"] };
+  const result = validateUiEvidence(evidence, { baseDir: root });
+  assert.equal(result.status, "BLOCKED");
+  assert.ok(result.findings.some((f) => f.code === "DOMAIN_ENTITY_IN_CLIENT_STORAGE"));
+});
+
+test("ui-data-map cross-check: a screen with no matching evidenced route is a coverage gap", () => {
+  const { root, evidence } = validEvidence();
+  const uiDataMap = {
+    screens: [
+      { id: "public-services", requirementRefs: ["RF-001"], reads: [{ operation: "GET /services", scope: "list" }] },
+      { id: "painel-os-kanban", requirementRefs: ["RF-009"], reads: [{ operation: "GET /ordens-servico", scope: "list" }] },
+    ],
+  };
+  const result = validateUiEvidence(evidence, { baseDir: root, uiDataMap });
+  assert.equal(result.status, "BLOCKED");
+  assert.ok(result.findings.some((f) => f.code === "SCREEN_COVERAGE_INCOMPLETE" && f.path === "painel-os-kanban"));
+});
+
+test("ui-data-map cross-check: a list screen's evidenced route without persistenceProof is blocked", () => {
+  const { root, evidence } = validEvidence();
+  const uiDataMap = { screens: [{ id: "public-services", requirementRefs: ["RF-001"], reads: [{ operation: "GET /services", scope: "list" }] }] };
+  const result = validateUiEvidence(evidence, { baseDir: root, uiDataMap });
+  assert.equal(result.status, "BLOCKED");
+  assert.ok(result.findings.some((f) => f.code === "PERSISTENCE_PROOF_MISSING"));
+});
+
+test("ui-data-map cross-check: passes once the matching route carries persistenceProof", () => {
+  const { root, evidence } = validEvidence();
+  evidence.routes[0].persistenceProof = { createdViaUi: true, verifiedInFreshContext: true };
+  const uiDataMap = { screens: [{ id: "public-services", requirementRefs: ["RF-001"], reads: [{ operation: "GET /services", scope: "list" }] }] };
+  const result = validateUiEvidence(evidence, { baseDir: root, uiDataMap });
+  assert.equal(result.status, "PASS");
+});
+
+test("ui-data-map cross-check: a detail-only screen does not require persistenceProof", () => {
+  const { root, evidence } = validEvidence();
+  const uiDataMap = { screens: [{ id: "public-services", requirementRefs: ["RF-001"], reads: [{ operation: "GET /services/{id}", scope: "detail" }] }] };
+  const result = validateUiEvidence(evidence, { baseDir: root, uiDataMap });
+  assert.equal(result.status, "PASS");
+});
+

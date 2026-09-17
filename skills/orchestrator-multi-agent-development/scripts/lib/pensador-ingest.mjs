@@ -60,20 +60,108 @@ function readHandoffSafe(path) {
 }
 
 /** Resolves additive v1 visual handoff fields and marks older entries explicitly. */
-export function inspectVisualHandoff(handoff, handoffPath) {
+/**
+ * Builds an `artifact.path` -> absolute-filesystem-path resolver for a
+ * handoff, honoring `artifactRoot` the same way for every artifact role.
+ * Factored out of inspectVisualHandoff() so inspectDataContractArtifacts()
+ * (ui-data-map/seed-plan/surface-benchmark) resolves paths identically.
+ */
+function buildArtifactRootResolver(handoff, handoffPath) {
   const handoffDir = dirname(handoffPath);
   const declaredRoot = String(handoff.artifactRoot ?? "").replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/$/, "");
   const declaredSegments = declaredRoot.split("/").filter(Boolean);
   const projectRoot = declaredSegments.length > 0
     ? resolve(handoffDir, ...declaredSegments.map(() => ".."))
     : resolve(handoffDir, "..", "..");
-  const resolveArtifactRoot = (artifactPath) => {
+  return (artifactPath) => {
     const normalized = String(artifactPath ?? "").replace(/\\/g, "/").replace(/^\.\//, "");
     if (declaredRoot && (normalized === declaredRoot || normalized.startsWith(`${declaredRoot}/`))) {
       return resolve(projectRoot, normalized);
     }
     return resolve(handoffDir, normalized);
   };
+}
+
+/**
+ * Reads the ui-data-map/seed-plan/surface-benchmark artifacts (cc-pensador
+ * >= 2.27.0) out of a validated Pensador handoff, when present. All three
+ * roles are optional (a handoff from an older producer version simply won't
+ * have them) — absence degrades to `null` fields plus an informative
+ * finding, never a crash or a silent false pass. This is the data Fase 4's
+ * `contractCoverage` gate and Fase 5's front-end prompts consume as the
+ * single source of truth for "what does this screen read/write, and where
+ * does demo data come from" — see references/workflow.md Fase 4/5.
+ *
+ * @param {object} handoff - the parsed, already-validated handoff.json
+ * @param {string} handoffPath - absolute path to handoff.json
+ * @returns {{
+ *   uiDataMap: object|null, uiDataMapPath: string|null,
+ *   seedPlan: object|null, seedPlanPath: string|null,
+ *   surfaceBenchmark: object|null, surfaceBenchmarkPath: string|null,
+ *   findings: Array<{severity: string, code: string, path?: string}>,
+ * }}
+ */
+export function inspectDataContractArtifacts(handoff, handoffPath) {
+  const resolveArtifactRoot = buildArtifactRootResolver(handoff, handoffPath);
+  const findings = [];
+  const result = {
+    uiDataMap: null, uiDataMapPath: null,
+    seedPlan: null, seedPlanPath: null,
+    surfaceBenchmark: null, surfaceBenchmarkPath: null,
+    findings,
+  };
+  const byRole = (role) => (handoff.artifacts ?? []).find((artifact) => artifact?.role === role);
+
+  const uiDataMapArtifact = byRole("ui-data-map");
+  if (uiDataMapArtifact) {
+    const absolute = resolveArtifactRoot(uiDataMapArtifact.path);
+    result.uiDataMapPath = absolute;
+    if (!existsSync(absolute)) {
+      findings.push({ severity: "high", code: "UI_DATA_MAP_MISSING", path: absolute });
+    } else {
+      try {
+        result.uiDataMap = JSON.parse(readFileSync(absolute, "utf8"));
+      } catch {
+        findings.push({ severity: "high", code: "UI_DATA_MAP_INVALID", path: absolute });
+      }
+    }
+  }
+
+  const seedPlanArtifact = byRole("seed-plan");
+  if (seedPlanArtifact) {
+    const absolute = resolveArtifactRoot(seedPlanArtifact.path);
+    result.seedPlanPath = absolute;
+    if (!existsSync(absolute)) {
+      findings.push({ severity: "high", code: "SEED_PLAN_MISSING", path: absolute });
+    } else {
+      try {
+        result.seedPlan = JSON.parse(readFileSync(absolute, "utf8"));
+      } catch {
+        findings.push({ severity: "high", code: "SEED_PLAN_INVALID", path: absolute });
+      }
+    }
+  }
+
+  const surfaceBenchmarkArtifact = byRole("surface-benchmark");
+  if (surfaceBenchmarkArtifact) {
+    const absolute = resolveArtifactRoot(surfaceBenchmarkArtifact.path);
+    result.surfaceBenchmarkPath = absolute;
+    if (!existsSync(absolute)) {
+      findings.push({ severity: "warning", code: "SURFACE_BENCHMARK_MISSING", path: absolute });
+    } else {
+      try {
+        result.surfaceBenchmark = JSON.parse(readFileSync(absolute, "utf8"));
+      } catch {
+        findings.push({ severity: "warning", code: "SURFACE_BENCHMARK_INVALID", path: absolute });
+      }
+    }
+  }
+
+  return result;
+}
+
+export function inspectVisualHandoff(handoff, handoffPath) {
+  const resolveArtifactRoot = buildArtifactRootResolver(handoff, handoffPath);
   const packages = [];
   const findings = [];
   const prototypes = [];
@@ -161,17 +249,26 @@ export function inspectVisualHandoff(handoff, handoffPath) {
     packages.push({ variant, authoritative: artifact.authoritative === true, packageRoot, materializeInto: artifact.materializeInto, priorityFiles, assets });
   }
   const imageryPlan = projectBaseline?.visualImageryPlan ?? null;
-  const boundAssets = packages.flatMap((item) => item.assets).filter((asset) =>
-    asset?.purpose === "seed-demo" || (Array.isArray(asset?.seedBindings) && asset.seedBindings.length > 0));
-  if (imageryPlan?.policy === "required" && boundAssets.length < Number(imageryPlan.minimumAssets ?? 1)) {
+  // Two DISTINCT counts, deliberately not merged: `visualImageryPlan` is
+  // about CONTENT imagery for a public surface (hero/catalog photos — any
+  // asset purpose counts toward its minimum), while a `seed-demo` asset is a
+  // narrower concept (demonstration data needing bound photos). Counting
+  // only seed-bound assets against visualImageryPlan.minimumAssets was the
+  // root cause of a real false block: a landing page requirement mentioning
+  // "hero banner" set policy: required with content (not seed) images
+  // planned, and the seed-only count made a correctly-generated content
+  // asset invisible to this gate (see cc-pensador's inferVisualImageryPlan
+  // docstring for the fuller root-cause note; both sides fixed together).
+  const allAssets = packages.flatMap((item) => item.assets);
+  if (imageryPlan?.policy === "required" && allAssets.length < Number(imageryPlan.minimumAssets ?? 1)) {
     findings.push({
       severity: "high",
       code: "REQUIRED_VISUAL_IMAGERY_MISSING",
       expected: Number(imageryPlan.minimumAssets ?? 1),
-      actual: boundAssets.length,
+      actual: allAssets.length,
       message: "Pensador visualImageryPlan requires AGY assets with real bindings before orchestration.",
     });
-  } else if (imageryPlan?.policy === "recommended" && packages.flatMap((item) => item.assets).length === 0) {
+  } else if (imageryPlan?.policy === "recommended" && allAssets.length === 0) {
     findings.push({ severity: "warning", code: "RECOMMENDED_VISUAL_IMAGERY_MISSING", expected: Number(imageryPlan.minimumAssets ?? 1), actual: 0 });
   }
   return {
@@ -299,6 +396,7 @@ export function ingestPensadorHandoff(options = {}) {
   const handoffRead = readHandoffSafe(handoffPath);
   if (handoffRead?.valid) {
     const visualPackage = inspectVisualHandoff(handoffRead.handoff, handoffPath);
+    const dataContract = inspectDataContractArtifacts(handoffRead.handoff, handoffPath);
     return {
       mode: "joint",
       slug: chosen.slug,
@@ -308,6 +406,7 @@ export function ingestPensadorHandoff(options = {}) {
       legacyProgress: null,
       warning: null,
       visualPackage,
+      dataContract,
     };
   }
 

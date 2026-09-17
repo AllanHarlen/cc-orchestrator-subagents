@@ -166,6 +166,7 @@ Para cada task extraida do PRD/spec, registre em `.orchestrator/runs/<nome>/plan
 - complexidade;
 - `contractRequired: yes|no`;
 - `assignedAgent`;
+- `visualImageryPolicy: required|recommended|not-applicable`, `visualImageryReasons` e `minimumAssets`, calculados com `node "${CLAUDE_SKILL_DIR}/scripts/visual-imagery-plan.mjs" --text "<descricao da task>"`. Preserve a politica mais forte de `project-baseline.json.visualImageryPlan` quando o Pensador a fornecer;
 - `executor` e `executorSource: project-config` — o Executor derivado da categoria pela Project_Config vigente (`codex`, `agy` ou `claude-code`), ver abaixo;
 - `routingReason`;
 - `expectedFiles` e/ou `validationPlan` (ao menos um e obrigatorio para reconciliacao);
@@ -507,9 +508,11 @@ Cada prompt deve incluir:
 - regra de validar casing JSON e serializacao;
 - `sectorContext` (setor/industria do negocio, do PRD/`design-system.md` do Pensador) — orienta que imagery/iconografia fazem sentido para o produto real.
 
-### Imagery/icones — materializacao do handoff
+### Imagery/icones — materializacao do handoff e modo independente
 
-O Pensador ja tomou a unica decisao de imagery e publicou `assets/manifest.json`. A materializacao (script, gate `visualMaterialization`, bloqueio de dispatch) ja aconteceu na Fase 4 (secao 4.0) — nenhuma task front-end desta fase deveria estar rodando se aquele gate nao tivesse fechado `DONE`. Nao use `AskUserQuestion` para imagens e nao invoque `--generate-image`. O browser gate (Fase 9, `visualAudit`) comprova imagens nos estados normais, `alt`, ausencia de arquivos quebrados e dados vindos da API real.
+No modo conjunto, o Pensador ja tomou a decisao de imagery e publicou `assets/manifest.json`. Preserve `project-baseline.json.visualImageryPlan`; politica `required` sem o minimo de assets vinculados bloqueia a ingestao/materializacao e deve ser corrigida na origem. Nao regenere silenciosamente um pacote autoritativo.
+
+No modo independente, a Fase 2 e proprietaria da decisao: catalogo/vitrine de pecas, equipamentos, produtos ou servicos gera uma task visual AGY obrigatoria com minimo 3 imagens; landing page, homepage e area publica/institucional/marketing gera uma task recomendada com minimo 1, dispensavel apenas com justificativa. Execute uma chamada sequencial `--generate-image` por arquivo e exija `AGY_IMAGE_RESULT` (`count: 1`, destino, bytes e SHA-256). Depois vincule a `src`/import e, em catalogos, ao seed/registro real. O browser gate (Fase 9, `visualAudit`) comprova o resultado; arquivo solto nao conclui a task.
 
 ### Verificacao de skills compativeis
 

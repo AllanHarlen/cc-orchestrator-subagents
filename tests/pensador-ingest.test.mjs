@@ -317,6 +317,22 @@ test("inspectVisualHandoff and ingestPensadorHandoff collect and expose ui-proto
   assert.equal(ingested.visualPackage.brandAssets[0].manifestExists, true);
 });
 
+test("inspectVisualHandoff blocks a required visualImageryPlan without bound assets", () => {
+  const root = fixture();
+  const handoffDir = join(root, ".pensador/app-v1");
+  writeJson(join(handoffDir, "project-baseline.json"), {
+    visualImageryPlan: { policy: "required", provider: "agy", minimumAssets: 3, reasons: ["catalog-visual-merchandising"] },
+  });
+  const handoff = {
+    ...baseHandoff("app"),
+    artifacts: [{ role: "project-baseline", path: "project-baseline.json", required: true }],
+  };
+  const visual = inspectVisualHandoff(handoff, join(handoffDir, "handoff.json"));
+  assert.equal(visual.visualImageryPlan.policy, "required");
+  assert.equal(visual.blocking, true);
+  assert.ok(visual.findings.some((finding) => finding.code === "REQUIRED_VISUAL_IMAGERY_MISSING"));
+});
+
 // A real run (OficinaAI, 2026-09-12) had a status: DONE handoff with
 // design-system-files.variant "legacy-verbatim" (the DESIGN stage was
 // skipped) treated as a mere warning here, so materialize-visual-handoff.mjs

@@ -78,6 +78,13 @@ export function inspectVisualHandoff(handoff, handoffPath) {
   const findings = [];
   const prototypes = [];
   const brandAssets = [];
+  const baselineArtifact = (handoff.artifacts ?? []).find((artifact) => artifact?.role === "project-baseline");
+  let projectBaseline = null;
+  if (baselineArtifact) {
+    const baselinePath = resolveArtifactRoot(baselineArtifact.path);
+    try { projectBaseline = JSON.parse(readFileSync(baselinePath, "utf8")); }
+    catch { findings.push({ severity: "high", code: "PROJECT_BASELINE_INVALID", path: baselinePath }); }
+  }
   for (const artifact of handoff.artifacts ?? []) {
     if (artifact?.role === "ui-prototype") {
       const prototypeRoot = resolveArtifactRoot(artifact.path);
@@ -153,10 +160,26 @@ export function inspectVisualHandoff(handoff, handoffPath) {
     }
     packages.push({ variant, authoritative: artifact.authoritative === true, packageRoot, materializeInto: artifact.materializeInto, priorityFiles, assets });
   }
+  const imageryPlan = projectBaseline?.visualImageryPlan ?? null;
+  const boundAssets = packages.flatMap((item) => item.assets).filter((asset) =>
+    asset?.purpose === "seed-demo" || (Array.isArray(asset?.seedBindings) && asset.seedBindings.length > 0));
+  if (imageryPlan?.policy === "required" && boundAssets.length < Number(imageryPlan.minimumAssets ?? 1)) {
+    findings.push({
+      severity: "high",
+      code: "REQUIRED_VISUAL_IMAGERY_MISSING",
+      expected: Number(imageryPlan.minimumAssets ?? 1),
+      actual: boundAssets.length,
+      message: "Pensador visualImageryPlan requires AGY assets with real bindings before orchestration.",
+    });
+  } else if (imageryPlan?.policy === "recommended" && packages.flatMap((item) => item.assets).length === 0) {
+    findings.push({ severity: "warning", code: "RECOMMENDED_VISUAL_IMAGERY_MISSING", expected: Number(imageryPlan.minimumAssets ?? 1), actual: 0 });
+  }
   return {
     packages,
     prototypes,
     brandAssets,
+    projectBaseline,
+    visualImageryPlan: imageryPlan,
     findings,
     blocking: findings.some((item) => ["critical", "high"].includes(item.severity)),
     degraded: findings.some((item) => item.code === "LEGACY_VERBATIM_DESIGN"),

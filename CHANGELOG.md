@@ -1,5 +1,61 @@
 # Changelog
 
+## [4.20.0] — 2026-09-17 — Fallback de cota opt-in (claude-code -> codex -> agy) e worktree sem Git instalado
+
+Dois pedidos independentes do usuario sobre o mesmo plugin: (1) hoje `QUOTA_EXHAUSTED`/`QUOTA_EXAUSTED`
+num Executor de implementacao vira bloqueio ou pede decisao do usuario, e Claude nunca e usado como
+fallback ("preservar a cota da sessao principal"); alguns usuarios querem suspender essa regra de
+forma explicita e opt-in. (2) quando o diretorio do projeto nao tem Git instalado ou nao e um
+repositorio Git, `planTaskWorktrees` calculava overlap de escopo sobre um `inspectGit` que ja
+reportava `available: false`, deixando o comportamento efetivo dependente de como o consumidor lia
+esse plano em vez de ser explicito e testado.
+
+- **5a pergunta da Project_Config: `quotaFallbackChain` (`disabled`/`enabled`, default `disabled`).**
+  Novo campo opt-in, documentado em `references/project-config.md` ao lado das quatro perguntas de
+  papel — mas fora de `ROLES`: nao decide um Executor, e um toggle. Retrocompativel por design: um
+  `.orchestrator/project-config.md` gravado antes desta versao nao tem a linha e o parser resolve
+  `disabled` sem lancar `PROJECT_CONFIG_FIELD_MISSING` (`scripts/lib/project-config.mjs`). Congelado
+  no snapshot `state.json.projectConfig` junto dos quatro papeis e coberto pelo mesmo fluxo de
+  `projectConfigDrift`/adocao de escopo `pending` (`orchestration-state.mjs`, novo
+  `diffQuotaFallbackChain`).
+- **`scripts/lib/quota-fallback.mjs` (novo) e `state.json.quotaHandoffs[]` (contrato de repasse).**
+  `resolveFallbackChain(originalExecutor, { exhausted })` calcula, de forma pura, os elos ainda
+  tentaveis da cadeia fixa `claude-code, codex, agy` excluindo o Executor original e qualquer elo ja
+  esgotado nesta Run. `recordQuotaHandoff`/`listQuotaHandoffs`/`markQuotaRecoveryChecked` gravam e
+  consultam uma nova transicao de estado (`appendQuotaHandoff`/`markQuotaHandoffRecoveryChecked` em
+  `orchestration-state.mjs`, no mesmo padrao de `updateTaskWorkspace`): cada troca de Executor por
+  cota vira uma entrada `{ taskId, wave, fromExecutor, toExecutor, reasonCode, chainPosition,
+  timestamp, quotaRecoveryCheck }`. Nova CLI fina `scripts/quota-fallback.mjs` (`resolve`, `record`,
+  `list`, `mark-recovery-checked`) para o workflow chamar durante a Fase de dispatch e o ciclo de
+  heartbeat/sweep. **Kiro fica de fora desta rodada** (nao ha hoje integracao de Kiro como Executor no
+  Orquestrador; adiciona-la e trabalho novo, nao uma extensao desta cadeia).
+- **`SKILL.md` (Politica de quota) e `references/agent-stack.md` atualizados com a condicao de
+  ativacao do fallback**, preservando linha a linha o comportamento atual quando `quotaFallbackChain`
+  esta `disabled` (ou ausente/legado). Fallback para `claude-code` segue a "Regra central do Executor
+  `claude-code`" ja existente (implementacao via `Agent`, review read-only); fallback para
+  `codex`/`agy` segue o caminho de troca de Executor ja documentado. Ciclo de heartbeat/sweep sonda
+  `quotaHandoffs` com `quotaRecoveryCheck: "PENDING"` (reaproveitando `adaptExecutorProbe`) e
+  atualiza para `RESTORED` — puramente informativo, nunca reabre ou reexecuta uma task ja `DONE`.
+- **Telemetria: novo tipo de evento `quota_handoff`.** `TELEMETRY_EVENT_TYPES`,
+  `ALLOWED_FIELDS`/`ALLOWED_METADATA_FIELDS` de `scripts/lib/telemetry.mjs` ganham `fromExecutor`,
+  `toExecutor`, `chainPosition` e `quotaRecoveryCheck`, respeitando o contrato de privacidade
+  existente (metadata-only, `FORBIDDEN_FIELD_PATTERN` continua banindo prompt/conteudo/credencial).
+- **Worktree sem Git instalado degrada silenciosamente para execucao serializada.**
+  `scripts/preflight.mjs` ganha `checks.runtime.git` (via o `checkCli()` generico ja existente) —
+  nunca obrigatorio, sempre um aviso (`NOT_INSTALLED`) quando reprova, no mesmo padrao do loop de
+  avisos de MCP. `worktree-manager.mjs::planTaskWorktrees` agora checa `inspectGit(root)` uma unica
+  vez no inicio: quando indisponivel, marca toda task da wave `eligible: false, reason:
+  "GIT_UNAVAILABLE"` sem calcular overlap de escopo, sem lancar erro e sem perguntar nada ao usuario.
+  Com Git disponivel o comportamento nao muda (elegibilidade deterministica por escopo de arquivos) —
+  agora documentado explicitamente em `SKILL.md` e `references/worktrees-routing.md` para nao
+  regredir.
+
+11 testes novos/atualizados (`quota-fallback.test.mjs`, `routing-gates.test.mjs`,
+`worktree-manager.test.mjs`, `run-config.property.test.mjs`, `project-config-cli.test.mjs`,
+`tests/helpers/project-config-arbitraries.mjs`); suite completa: 460 passed, 1 pre-existente (fora
+do escopo desta mudanca — sincronizacao de `handoff-contract.md`/`ui-prototype` pendente de uma
+mudanca irmA no cc-pensador).
+
 ## [4.19.0] — 2026-09-17 — Gate de cobertura de contrato (ui-data-map), prova de persistencia na E2E, imagery por superficie
 
 Segunda rodada de correcao sobre a mesma run real (OficinaAI, 2026-09-16, apos a 4.18.0 ja em

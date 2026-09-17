@@ -89,8 +89,28 @@ export const DEFAULT_PROJECT_CONFIG = Object.freeze({
   frontendReviewer: "agy",
 });
 
+/**
+ * Campo opt-in (nao um papel de executor): controla se cota esgotada num
+ * Executor avanca automaticamente pela cadeia de fallback
+ * `claude-code -> codex -> agy` (ver `scripts/lib/quota-fallback.mjs` e
+ * `Politica de quota` no SKILL.md). Diferente dos quatro papeis, e
+ * **retrocompativel**: um Project_Config_File gravado antes desta feature nao
+ * tem a linha e o parser resolve `disabled` sem lancar `PROJECT_CONFIG_FIELD_MISSING`.
+ */
+export const QUOTA_FALLBACK_FIELD = "quotaFallbackChain";
+export const QUOTA_FALLBACK_VALUES = Object.freeze(["disabled", "enabled"]);
+export const DEFAULT_QUOTA_FALLBACK_CHAIN = "disabled";
+
+/** Papeis e campos rastreados por `defaultsApplied`/`default-aplicado`. */
+export const DEFAULT_APPLIED_TRACKED_FIELDS = Object.freeze([...ROLES, QUOTA_FALLBACK_FIELD]);
+
 /** Ordem canonica das linhas de campo do Project_Config_File. */
-export const PROJECT_CONFIG_FIELDS = Object.freeze(["schemaVersion", "updatedAt", ...ROLES]);
+export const PROJECT_CONFIG_FIELDS = Object.freeze([
+  "schemaVersion",
+  "updatedAt",
+  ...ROLES,
+  QUOTA_FALLBACK_FIELD,
+]);
 
 export const PROJECT_CONFIG_DIRECTORY = ".orchestrator";
 export const PROJECT_CONFIG_FILENAME = "project-config.md";
@@ -113,6 +133,9 @@ const NOTE_LINE = /^[\t ]*[-*+][\t ]*([A-Za-z][A-Za-z0-9_-]*)[\t ]*:[\t ]*(.*)$/
 
 const FIELD_BY_LOWERCASE = new Map(PROJECT_CONFIG_FIELDS.map((field) => [field.toLowerCase(), field]));
 const ROLE_BY_LOWERCASE = new Map(ROLES.map((role) => [role.toLowerCase(), role]));
+const TRACKED_FIELD_BY_LOWERCASE = new Map(
+  DEFAULT_APPLIED_TRACKED_FIELDS.map((field) => [field.toLowerCase(), field]),
+);
 
 export class ProjectConfigError extends Error {
   constructor(code, message, details = {}) {
@@ -215,6 +238,23 @@ function normalizeRoleValue(role, value, path) {
   return normalized;
 }
 
+/**
+ * Normaliza `quotaFallbackChain`. Diferente dos quatro papeis, ausencia
+ * (`undefined`/`null`/vazio) nao e erro: resolve para `DEFAULT_QUOTA_FALLBACK_CHAIN`,
+ * o que mantem retrocompatibilidade com Project_Config_File gravados antes desta
+ * feature. Presente, o valor precisa pertencer a `QUOTA_FALLBACK_VALUES`.
+ */
+function normalizeQuotaFallbackChainValue(value, path) {
+  if (value === undefined || value === null || String(value).trim() === "") {
+    return DEFAULT_QUOTA_FALLBACK_CHAIN;
+  }
+  const normalized = String(value).trim().toLowerCase();
+  if (!QUOTA_FALLBACK_VALUES.includes(normalized)) {
+    throw invalidValue(QUOTA_FALLBACK_FIELD, String(value).trim(), path, QUOTA_FALLBACK_VALUES);
+  }
+  return normalized;
+}
+
 function normalizeDefaultsApplied(value, path) {
   if (value === undefined || value === null || value === "") return [];
   const entries = Array.isArray(value) ? value : String(value).split(",");
@@ -222,11 +262,11 @@ function normalizeDefaultsApplied(value, path) {
   for (const entry of entries) {
     const normalized = String(entry ?? "").trim().toLowerCase();
     if (normalized === "") continue;
-    const role = ROLE_BY_LOWERCASE.get(normalized);
-    if (!role) throw invalidValue("defaultsApplied", String(entry).trim(), path, ROLES);
-    selected.add(role);
+    const field = TRACKED_FIELD_BY_LOWERCASE.get(normalized);
+    if (!field) throw invalidValue("defaultsApplied", String(entry).trim(), path, DEFAULT_APPLIED_TRACKED_FIELDS);
+    selected.add(field);
   }
-  return ROLES.filter((role) => selected.has(role));
+  return DEFAULT_APPLIED_TRACKED_FIELDS.filter((field) => selected.has(field));
 }
 
 /**
@@ -245,6 +285,7 @@ function normalizeProjectConfig(config, { now, path } = {}) {
     updatedAt: formatInstant(instant, "updatedAt", target),
   };
   for (const role of ROLES) normalized[role] = normalizeRoleValue(role, config[role], target);
+  normalized[QUOTA_FALLBACK_FIELD] = normalizeQuotaFallbackChainValue(config[QUOTA_FALLBACK_FIELD], target);
   normalized.defaultsApplied = normalizeDefaultsApplied(config.defaultsApplied, target);
   return normalized;
 }
@@ -266,6 +307,7 @@ export function renderProjectConfig(config, options = {}) {
     `- **schemaVersion**: ${normalized.schemaVersion}`,
     `- **updatedAt**: ${normalized.updatedAt}`,
     ...ROLES.map((role) => `- **${role}**: ${normalized[role]}`),
+    `- **${QUOTA_FALLBACK_FIELD}**: ${normalized[QUOTA_FALLBACK_FIELD]}`,
   ];
   if (normalized.defaultsApplied.length > 0) {
     lines.push(
@@ -306,7 +348,11 @@ export function parseProjectConfig(content, options = {}) {
           field,
           `${previous} | ${value}`,
           path,
-          field === "schemaVersion" || field === "updatedAt" ? ["single occurrence"] : EXECUTORS,
+          field === "schemaVersion" || field === "updatedAt"
+            ? ["single occurrence"]
+            : field === QUOTA_FALLBACK_FIELD
+              ? QUOTA_FALLBACK_VALUES
+              : EXECUTORS,
         );
       }
       fields.set(field, value);
@@ -316,8 +362,8 @@ export function parseProjectConfig(content, options = {}) {
     // colide com linha de campo nem com valor de executor.
     const noteMatch = rawLine.match(NOTE_LINE);
     if (noteMatch && cleanValue(noteMatch[2]).toLowerCase() === PROJECT_CONFIG_DEFAULT_APPLIED_MARK) {
-      const role = ROLE_BY_LOWERCASE.get(noteMatch[1].toLowerCase());
-      if (role) notes.add(role);
+      const field = TRACKED_FIELD_BY_LOWERCASE.get(noteMatch[1].toLowerCase());
+      if (field) notes.add(field);
     }
   }
 
@@ -337,7 +383,10 @@ export function parseProjectConfig(content, options = {}) {
     updatedAt: formatInstant(rawUpdatedAt, "updatedAt", path),
   };
   for (const role of ROLES) parsed[role] = normalizeRoleValue(role, fields.get(role), path);
-  parsed.defaultsApplied = ROLES.filter((role) => notes.has(role));
+  // `quotaFallbackChain` e retrocompativel: linha ausente resolve para o
+  // default sem lancar `PROJECT_CONFIG_FIELD_MISSING`.
+  parsed[QUOTA_FALLBACK_FIELD] = normalizeQuotaFallbackChainValue(fields.get(QUOTA_FALLBACK_FIELD), path);
+  parsed.defaultsApplied = DEFAULT_APPLIED_TRACKED_FIELDS.filter((field) => notes.has(field));
   return parsed;
 }
 
@@ -370,6 +419,7 @@ export function defaultProjectConfig() {
     schemaVersion: PROJECT_CONFIG_SCHEMA_VERSION,
     updatedAt: null,
     ...DEFAULT_PROJECT_CONFIG,
+    [QUOTA_FALLBACK_FIELD]: DEFAULT_QUOTA_FALLBACK_CHAIN,
     defaultsApplied: [],
   };
 }
@@ -480,12 +530,20 @@ export function applyProjectConfigDefaults(answers = {}, options = {}) {
     resolved[role] = normalizeRoleValue(role, answer, path);
   }
 
+  const quotaAnswer = answers[QUOTA_FALLBACK_FIELD];
+  if (quotaAnswer === undefined || quotaAnswer === null || String(quotaAnswer).trim() === "") {
+    resolved[QUOTA_FALLBACK_FIELD] = DEFAULT_QUOTA_FALLBACK_CHAIN;
+    applied.add(QUOTA_FALLBACK_FIELD);
+  } else {
+    resolved[QUOTA_FALLBACK_FIELD] = normalizeQuotaFallbackChainValue(quotaAnswer, path);
+  }
+
   const instant = options.now ?? answers.updatedAt ?? null;
   return {
     schemaVersion: normalizeSchemaVersion(answers.schemaVersion, path),
     updatedAt: instant === null ? null : formatInstant(instant, "updatedAt", path),
     ...resolved,
-    defaultsApplied: ROLES.filter((role) => applied.has(role)),
+    defaultsApplied: DEFAULT_APPLIED_TRACKED_FIELDS.filter((field) => applied.has(field)),
   };
 }
 
@@ -603,9 +661,59 @@ export const PROJECT_CONFIG_QUESTIONS = Object.freeze(
   ),
 );
 
-/** Lista das perguntas na ordem de apresentacao. */
+/**
+ * 5a pergunta da coleta: nao decide um Executor, e o toggle opt-in do fallback
+ * de cota `claude-code -> codex -> agy` (Politica de quota, SKILL.md).
+ * Apresentada por ultimo, depois das quatro perguntas de papel.
+ */
+export const QUOTA_FALLBACK_QUESTION = Object.freeze({
+  role: QUOTA_FALLBACK_FIELD,
+  order: PROJECT_CONFIG_QUESTION_ORDER.length + 1,
+  title:
+    "Em caso de cota esgotada em um Executor, avancar automaticamente pela cadeia "
+    + "claude-code -> codex -> agy?",
+  roleDescription:
+    "Controla se, ao detectar QUOTA_EXHAUSTED/QUOTA_EXAUSTED no Executor original de uma task, o "
+    + "Orquestrador tenta automaticamente o proximo elo disponivel da cadeia fixa "
+    + "claude-code -> codex -> agy, registrando um contrato de repasse monitorado.",
+  defaultOption: DEFAULT_QUOTA_FALLBACK_CHAIN,
+  options: Object.freeze([
+    Object.freeze({
+      value: "disabled",
+      label: "Desabilitado (comportamento atual)",
+      isDefault: true,
+      requiresCli: null,
+      description:
+        "Comportamento atual: cota esgotada em Codex/AGY vira bloqueio ou pede decisao do usuario; "
+        + "Claude nunca e usado como fallback (preserva a cota da sessao principal).",
+      note: null,
+    }),
+    Object.freeze({
+      value: "enabled",
+      label: "Habilitado",
+      isDefault: false,
+      requiresCli: null,
+      description:
+        "Ao detectar QUOTA_EXHAUSTED/QUOTA_EXAUSTED no Executor original de uma task, tenta "
+        + "automaticamente o proximo elo disponivel da cadeia fixa claude-code -> codex -> agy "
+        + "(pulando o elo que falhou e qualquer elo tambem com cota esgotada), registrando cada "
+        + "troca num contrato de repasse monitorado pelo Orquestrador.",
+      note: null,
+    }),
+  ]),
+});
+
+/** Lista das quatro perguntas de papel na ordem de apresentacao. */
 export function projectConfigQuestions() {
   return PROJECT_CONFIG_QUESTION_ORDER.map((role) => PROJECT_CONFIG_QUESTIONS[role]);
+}
+
+/**
+ * Lista das cinco perguntas da coleta (as quatro de papel mais
+ * `quotaFallbackChain`), na ordem de apresentacao da Fase 0.5.
+ */
+export function projectConfigAllQuestions() {
+  return [...projectConfigQuestions(), QUOTA_FALLBACK_QUESTION];
 }
 /**
  * CLIs externas conhecidas, na ordem canonica em que aparecem em `clis` e nos
@@ -807,4 +915,32 @@ export function diffProjectConfig(left, right, options = {}) {
     if (from !== to) differences.push(Object.freeze({ role, from, to }));
   }
   return differences;
+}
+
+/** Valor de `quotaFallbackChain` para diff: `null` quando ausente. */
+function diffQuotaFallbackValue(config, side, path) {
+  if (config === undefined || config === null) return null;
+  const value = config[QUOTA_FALLBACK_FIELD];
+  if (value === undefined || value === null || String(value).trim() === "") return null;
+  const normalized = String(value).trim().toLowerCase();
+  if (!QUOTA_FALLBACK_VALUES.includes(normalized)) {
+    throw invalidValue(`${side}.${QUOTA_FALLBACK_FIELD}`, String(value).trim(), path, QUOTA_FALLBACK_VALUES);
+  }
+  return normalized;
+}
+
+/**
+ * Compara `quotaFallbackChain` entre duas Project_Config, no mesmo formato de
+ * `diffProjectConfig` mas para o campo opt-in do fallback de cota (fora de
+ * `ROLES` porque nao decide um Executor). Congelado no mesmo snapshot dos
+ * quatro papeis (Estabilidade durante a Run, `project-config.md`), passa pelo
+ * mesmo fluxo de drift/`AskUserQuestion` de adocao.
+ *
+ * @returns {Array<{ role: "quotaFallbackChain", from: string|null, to: string|null }>}
+ */
+export function diffQuotaFallbackChain(left, right, options = {}) {
+  const path = options.path ?? PROJECT_CONFIG_RELATIVE_PATH;
+  const from = diffQuotaFallbackValue(left, "left", path);
+  const to = diffQuotaFallbackValue(right, "right", path);
+  return from === to ? [] : [Object.freeze({ role: QUOTA_FALLBACK_FIELD, from, to })];
 }

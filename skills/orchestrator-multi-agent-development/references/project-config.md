@@ -11,6 +11,8 @@ A stack de agentes não é constante. Os quatro papéis abaixo formam a **Projec
 
 Valores permitidos por papel: `codex`, `agy`, `claude-code`. A configuração é persistida em `.orchestrator/project-config.md` (arquivo Markdown versionável) e lida por `scripts/lib/project-config.mjs`, que é a fonte da verdade de perguntas, defaults, CLIs exigidas e roteamento derivado.
 
+Um quinto campo, `quotaFallbackChain`, complementa os quatro papéis: não decide um Executor, é um toggle opt-in (`disabled`/`enabled`) que controla se cota esgotada num Executor avança automaticamente pela cadeia de fallback `claude-code → codex → agy` (ver seção "A quinta pergunta" abaixo e `Política de cota` no `SKILL.md`).
+
 ## Ordem da Fase 0
 
 A coleta vem **antes** de qualquer oferta de instalação, e a instalação vem depois de a configuração estar resolvida. Numa Run nova sem arquivo de configuração isso produz até três preflights:

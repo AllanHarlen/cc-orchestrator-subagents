@@ -27,6 +27,19 @@ node "${CLAUDE_SKILL_DIR}/scripts/orchestration-lifecycle.mjs" watch --dir <run>
 
 Progresso renova heartbeat e lease; silêncio produz `STALLED`, grace e depois `INTERRUPT_THEN_RECONCILE`. Retry é proibido antes de reconciliar e confirmar que a sessão antiga não está viva.
 
+### Monitoramento do contrato de repasse de cota
+
+Quando `quotaFallbackChain` está `enabled` (ver `Política de quota` no SKILL.md), cada troca de Executor por cota grava uma entrada em `state.json.quotaHandoffs[]`:
+
+```bash
+node "${CLAUDE_SKILL_DIR}/scripts/quota-fallback.mjs" record --dir <run> --task <id> \
+  --from <executor> --to <executor> --reason-code QUOTA_EXHAUSTED --chain-position <n>
+node "${CLAUDE_SKILL_DIR}/scripts/quota-fallback.mjs" list --dir <run>
+node "${CLAUDE_SKILL_DIR}/scripts/quota-fallback.mjs" mark-recovery-checked --dir <run> --task <id> --status RESTORED
+```
+
+No mesmo ciclo de heartbeat/sweep, percorra a saída de `list` filtrando `quotaRecoveryCheck: "PENDING"` e reaproveite o mesmo probe estruturado de `adaptExecutorProbe` (`executor-adapters.mjs`) para sondar se o Executor original (`fromExecutor`) voltou a ter cota disponível; atualize para `RESTORED` com `mark-recovery-checked`, ou mantenha `PENDING`. Isso é só informativo/telemetria — **nunca** reabre nem reexecuta uma task já `DONE` com o Executor de fallback (`toExecutor`).
+
 ## Telemetria privacy-first
 
 `.orchestrator/telemetry.jsonl` registra apenas metadados allowlisted: IDs, categorias, modelo, tentativa, timestamps, duração, resultado, reason code/fingerprint, review, regressões e contadores. Os objetos `metadata` e `validationSummary` também são fechados por chave; prompt, conteúdo, diff, source code, secrets, credentials, raw output e qualquer campo arbitrário são recusados inclusive quando aninhados.

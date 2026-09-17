@@ -34,6 +34,7 @@
 
 import {
   ProjectConfigError,
+  QUOTA_FALLBACK_FIELD,
   ROLES,
   applyProjectConfigDefaults,
   deriveRequiredCliSet,
@@ -52,6 +53,9 @@ const ROLE_FLAGS = Object.freeze({
   frontendReviewer: "frontend-reviewer",
 });
 
+/** Flag de linha de comando do 5o campo (opt-in, nao um papel de executor). */
+const QUOTA_FALLBACK_FLAG = "quota-fallback-chain";
+
 function help() {
   return {
     name: "project-config",
@@ -62,12 +66,13 @@ function help() {
       show: "show [--root .]",
       write:
         "write --backend-executor <codex|agy|claude-code> --frontend-executor <v> "
-        + "--backend-reviewer <v> --frontend-reviewer <v> [--default-applied role,role] "
-        + "[--root .] [--now <iso-8601>]",
+        + "--backend-reviewer <v> --frontend-reviewer <v> [--quota-fallback-chain <disabled|enabled>] "
+        + "[--default-applied role,role] [--root .] [--now <iso-8601>]",
       validate: "validate [--root .]",
       "required-clis": "required-clis [--root .]",
     },
     roles: [...ROLES],
+    quotaFallbackField: QUOTA_FALLBACK_FIELD,
   };
 }
 
@@ -130,6 +135,11 @@ function requiredClis(root) {
 function write(root, args) {
   const answers = { defaultsApplied: listArg(args["default-applied"]) };
   for (const role of ROLES) answers[role] = required(args, ROLE_FLAGS[role]);
+  // Opt-in: ausente do argv vale como "sem resposta" (o mesmo tratamento dos
+  // quatro papeis) e recebe o default `disabled` marcado como default-aplicado.
+  if (args[QUOTA_FALLBACK_FLAG] !== undefined) {
+    answers[QUOTA_FALLBACK_FIELD] = args[QUOTA_FALLBACK_FLAG];
+  }
 
   const now = nowArg(args.now);
   const path = projectConfigPath(root);

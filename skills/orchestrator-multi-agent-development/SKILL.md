@@ -155,6 +155,15 @@ Nao tente contornar o sandbox com retries longos, troca arbitraria de ferramenta
 
 ## Politica de quota
 
+**Fallback de cota opt-in (`quotaFallbackChain`).** Quando `projectConfig.quotaFallbackChain === "enabled"` (5a pergunta da Project_Config, default `disabled`) e um Executor reporta `QUOTA_EXHAUSTED`/`QUOTA_EXAUSTED` numa task, calcule a cadeia de fallback com `resolveFallbackChain` (`scripts/lib/quota-fallback.mjs`): ordem fixa `claude-code, codex, agy` **excluindo** o Executor original e qualquer elo ja sinalizado como tambem esgotado nesta Run; tente o primeiro elo restante.
+
+- Fallback para `claude-code`: delega a task a um subagente do proprio Claude Code, seguindo exatamente a "Regra central do Executor `claude-code`" descrita acima — implementacao via `Agent`, nunca edicao direta no contexto principal; review em modo read-only.
+- Fallback para `codex`/`agy`: segue o mesmo caminho ja existente de troca de Executor (modelos Gemini nativos quando o alvo e AGY, como ja feito na regra de Codex->AGY abaixo).
+- Cada fallback bem-sucedido grava uma entrada no contrato de repasse via `node "${CLAUDE_SKILL_DIR}/scripts/quota-fallback.mjs" record --dir <run> --task <id> --from <executor> --to <executor> --reason-code QUOTA_EXHAUSTED --chain-position <n>` (`state.json.quotaHandoffs[]`) e e reportado em `run/monitoring.md`/`report/workflow-log.md`, igual as demais entradas de politica de cota.
+- Isso e uma suspensao explicita e opt-in da regra "NUNCA delegar para Claude, preservando a cota da sessao principal": so vale quando o toggle esta ligado. O ciclo de heartbeat/sweep monitora `quotaHandoffs` com `quotaRecoveryCheck: "PENDING"` para telemetria/informativo — nunca reabre nem reexecuta uma task ja `DONE` com o Executor de fallback.
+
+Quando `quotaFallbackChain` esta `disabled` (ou ausente/legado, Run antiga sem o campo), o comportamento **nao muda**: seguem as regras abaixo, linha a linha.
+
 - `QUOTA_EXAUSTED` no Antigravity/AGY:
   - registre o estado parcial;
   - faca fallback para Codex apenas quando for seguro;
@@ -247,6 +256,8 @@ node "${CLAUDE_SKILL_DIR}/scripts/orchestration-worktree.mjs" plan --dir ".orche
 ```
 
 Crie worktree apenas para tasks `ISOLATED`; `SERIAL`/`UNSCOPED` ficam fora do fan-out concorrente. Persista base/head/integration status e recupere worktrees apos crash. Antes de atribuir modelo AGY sem override, consulte `orchestration-router.mjs route`; registre a decisao e copie `decision.evidence` para `agyModelEvidence`. O validator reprova `agyModelSource: adaptive` sem evidencia.
+
+Quando `checks.runtime.git` reprova (Git ausente) ou o diretorio nao e um repositorio Git, `planTaskWorktrees` ja marca todas as tasks como `GIT_UNAVAILABLE`/nao elegiveis automaticamente: nenhuma pergunta ao usuario, nenhum erro — a wave inteira roda serializada no working directory principal. Com Git disponivel, a elegibilidade de worktree e puramente deterministica por escopo de arquivos; nunca pergunte ao usuario se deve isolar uma task em worktree.
 
 ## Telemetria, Learning Recipes e Curator
 

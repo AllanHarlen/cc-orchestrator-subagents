@@ -9,6 +9,7 @@ import {
   loadRun,
   syncRunFromArtifacts,
 } from "../skills/orchestrator-multi-agent-development/scripts/lib/orchestration-state.mjs";
+import { writeProjectConfig } from "../skills/orchestrator-multi-agent-development/scripts/lib/project-config.mjs";
 
 const roots = [];
 const validateRouting = resolve(
@@ -352,6 +353,35 @@ test("an invalid codexEffort value is rejected", () => {
   const result = runValidator(artifactDir);
   assert.equal(result.status, 1, result.output);
   assert.match(result.output, /codexEffort invalido \(ultra\)/);
+});
+
+test("a claude-code executor reached via quota fallback (not Project_Config directly) passes with no agyModel/codexModel", () => {
+  // Fallback de cota opt-in (quotaFallbackChain: enabled): o Executor original
+  // (codex) esgotou a cota e o Orquestrador avancou pela cadeia
+  // claude-code -> codex -> agy (scripts/lib/quota-fallback.mjs::resolveFallbackChain),
+  // chegando em claude-code para esta task. O validador de roteamento nao
+  // conhece "quota fallback" como origem propria — ele so cruza o executor
+  // declarado com o que a Project_Config vigente deriva para a categoria — por
+  // isso a Project_Config precisa refletir claude-code para este papel, exatamente
+  // como aconteceria apos o Orquestrador registrar o repasse. O bloco em
+  // tasks-classification.md/waves.md fica identico ao de um claude-code vindo
+  // direto do Project_Config: mesma regra, sem agyModel/codexModel.
+  const { root, artifactDir } = fixture({
+    "tasks-classification.md": [
+      "# Classificacao", "", "## BE-10 - API de estoque", "- categoria: BACKEND_ONLY",
+      "- executor: claude-code", "- executorSource: project-config",
+      "- quotaFallback: from codex, chainPosition 1, reasonCode QUOTA_EXHAUSTED",
+    ].join("\n"),
+    "waves.md": ["# Waves", "", "## Wave 1", "- BE-10"].join("\n"),
+  });
+  writeProjectConfig(root, {
+    backendExecutor: "claude-code",
+    frontendExecutor: "agy",
+    backendReviewer: "codex",
+    frontendReviewer: "agy",
+  });
+  const result = runValidator(artifactDir);
+  assert.equal(result.status, 0, result.output);
 });
 
 test("Achado 10: rejection messages carry a worked example, not just the rule name", () => {

@@ -7,6 +7,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -67,8 +68,54 @@ function fixture(options = {}) {
   return { root, artifactDir };
 }
 
+function fixtureNoGit(options = {}) {
+  // Fora da arvore do repositorio (cc-orchestrador-subagents e, ele mesmo, um
+  // repositorio Git): um diretorio dentro de `process.cwd()` sem `.git`
+  // proprio ainda resolveria o Git do repo pai via `git rev-parse
+  // --show-toplevel`, o que mascararia o cenario que este teste cobre.
+  const root = mkdtempSync(join(tmpdir(), "orchestrator-worktree-nogit-"));
+  roots.push(root);
+  const artifactDir = join(root, ".orchestration", "worktree-run");
+  mkdirSync(artifactDir, { recursive: true });
+  const shared = options.shared === true;
+  writeFileSync(join(artifactDir, "tasks-classification.md"), [
+    "# Tasks",
+    "",
+    "## BE-01 - Backend A",
+    "- category: BACKEND_ONLY",
+    "- assignedAgent: codex",
+    `- allowedPaths: \`${shared ? "src/shared" : "src/a.txt"}\``,
+    `- expectedFiles: \`${shared ? "src/shared/a.txt" : "src/a.txt"}\``,
+    "- validationPlan: `verify-a`",
+    "",
+    "## BE-02 - Backend B",
+    "- category: BACKEND_ONLY",
+    "- assignedAgent: codex",
+    `- allowedPaths: \`${shared ? "src/shared" : "src/b.txt"}\``,
+    `- expectedFiles: \`${shared ? "src/shared/b.txt" : "src/b.txt"}\``,
+    "- validationPlan: `verify-b`",
+  ].join("\n"), "utf8");
+  writeFileSync(join(artifactDir, "waves.md"), "# Waves\n\n## Wave 1\n- BE-01\n- BE-02\n", "utf8");
+  // Sem `git init`: `root` nao e um repositorio Git, entao `initRun` grava
+  // `state.git.available: false` e o planner precisa degradar sem lancar.
+  initRun({ projectRoot: root, artifactDir, slug: "worktree-run", runId: "worktree-run-001" });
+  return { root, artifactDir };
+}
+
 test.afterEach(() => {
   while (roots.length) rmSync(roots.pop(), { recursive: true, force: true });
+});
+
+test("worktree planner degrades to serialized execution when Git is unavailable", () => {
+  const { root, artifactDir } = fixtureNoGit();
+  const plan = planTaskWorktrees(root, artifactDir, { wave: 1 });
+  assert.deepEqual(plan.parallelEligible, []);
+  assert.deepEqual(plan.serialize, ["BE-01", "BE-02"]);
+  assert.equal(plan.shared.length, 0);
+  for (const task of plan.tasks) {
+    assert.equal(task.eligible, false);
+    assert.equal(task.reason, "GIT_UNAVAILABLE");
+  }
 });
 
 test("worktree planner isolates disjoint scopes and serializes shared scopes", () => {

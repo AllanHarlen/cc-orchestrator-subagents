@@ -62,6 +62,9 @@ const VALID_ROLES = Object.freeze({
   "frontend-executor": "agy",
   "backend-reviewer": "codex",
   "frontend-reviewer": "claude-code",
+  // Explicito para nao cair em "sem resposta" (default + default-aplicado) nos
+  // testes que nao exercitam especificamente esse campo.
+  "quota-fallback-chain": "disabled",
 });
 
 function writeArgs(overrides = {}) {

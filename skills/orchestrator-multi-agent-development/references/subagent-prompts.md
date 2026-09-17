@@ -205,12 +205,16 @@ Contexto:
 - task atual: <TASK ID - TITULO>
 - pacote visual autoritativo: <CAMINHOS design-contract.json, tokens.css, DESIGN.md e assets/manifest.json>
 - prototipos de referencia (spec visual dos fluxos criticos): <CAMINHO prototypes/ (ex.: .pensador/<slug>-vN/prototypes/)>
+- mapa tela -> contrato (fonte de dados obrigatoria): <CAMINHO ui-data-map.json — telas desta task e suas operacoes reais>
 
 Descricao:
 <COLAR DESCRICAO DA TASK>
 
 Contrato API/UI:
 <COLAR CONTRATO SE contractRequired=yes; senao remover>
+
+Fonte de dados (regra absoluta, nao uma preferencia):
+A UNICA fonte de dados de qualquer tela desta task e a operacao do contrato listada em `ui-data-map.json` para aquela tela (`dataSource: "api-contract"`). Proibido: persistir/ler entidade de dominio via `localStorage`, `sessionStorage`, IndexedDB ou qualquer estado do cliente que sobreviva ao reload sem passar pela API; credenciais de demo hardcoded que contornem a chamada real de login; popular uma tela com dados fixos quando o contrato ja tem a operacao correspondente. Se uma tela desta task nao tiver operacao correspondente no `ui-data-map`/contrato, NAO invente uma fonte alternativa — pare essa tela e retorne `Status: CONTRACT_GAP` (ver Regras e Retorno abaixo).
 
 Arquivos e modulos relevantes:
 <LISTAR ARQUIVOS>
@@ -283,31 +287,34 @@ Regras:
 - nao solicite, sugira nem gere imagens; todas as decisoes visuais ja foram fechadas pelo Pensador e estao em `assets/manifest.json`;
 - Shift-Left do Design System (consumir, nunca reinventar): quando `components.html` e `tokens.css` existirem, transpile os componentes HTML/CSS diretamente para a stack do projeto (React/Vue/etc.). NUNCA invente design, hierarquia, espacamentos ou layout do zero, e NUNCA use cores hexadecimais hardcoded fora dos tokens (`var(--*)`);
 - quando houver contratos tipados gerados em `contracts/` (via `generate-contract-types.mjs`), importe e consuma estritamente as interfaces TypeScript geradas;
+- fonte de dados: consulte `ui-data-map.json` para a operacao real de cada tela; NUNCA persista entidade de dominio em `localStorage`/`sessionStorage`/IndexedDB/estado do cliente, e NUNCA hardcode credenciais de demo que contornem o login real; uma tela sem operacao correspondente para `Status: CONTRACT_GAP` em vez de inventar dado local;
 - auto-verificacao local obrigatoria antes de reportar DONE: execute a compilacao, typecheck e lint da sua fatia no seu workspace/worktree (`<BUILD_CMD>` / `npm run build` / `npx tsc --noEmit` / `npm run lint`); corrija qualquer erro de tipagem ou compilacao antes de finalizar; so retorne `Status: DONE` com exit code 0;
 - se houver cota, retorne `Status: QUOTA_EXAUSTED`;
 - se houver autenticacao pendente, retorne `Status: AUTH_REQUIRED`;
 - se o `agy` nao existir no PATH do ambiente, retorne `Status: AGY_MISSING`;
 - se houver timeout do bridge, retorne `Status: TIMEOUT`;
+- se uma tela desta task nao tiver operacao de contrato correspondente, retorne `Status: CONTRACT_GAP` citando a tela e a operacao que falta — nao implemente com dado local para contornar;
 - se houver falha de escrita ou tools, pare e devolva ao orquestrador;
 - se receber `SLOW_CHECKIN`, responda com progresso real, arquivos tocados, bloqueios, riscos e ETA.
 
 Retorno:
-0. Status: DONE | BLOCKED | FAILED | QUOTA_EXAUSTED | AUTH_REQUIRED | AGY_MISSING | TIMEOUT
+0. Status: DONE | BLOCKED | FAILED | QUOTA_EXAUSTED | AUTH_REQUIRED | AGY_MISSING | TIMEOUT | CONTRACT_GAP
 1. Resumo do que foi implementado
 2. Arquivos alterados
 3. Decisoes de UI/UX
 4. Estados tratados
 5. Validacao do contrato e do wire format
-6. Testes ou validacoes feitas
-7. Pendencias
-8. Riscos
-9. Evidencia operacional
-10. Skills utilizadas: <lista das skills usadas ou "nenhuma">
-11. Subagentes Gemini nativos: <N | N/A>
-12. Conversation IDs dos subagentes: <lista | N/A>
-13. Tokens usados: input=<N> output=<N> cache_read=<N> total=<N>
+6. Fonte de dados por tela: uma linha por tela tocada — `<id do ui-data-map ou rota>` -> `<METODO /caminho real consumido>`. Uma tela sem linha aqui, ou cuja fonte declarada nao seja uma operacao do contrato, e motivo de reprovacao na Fase 7.
+7. Testes ou validacoes feitas
+8. Pendencias
+9. Riscos
+10. Evidencia operacional
+11. Skills utilizadas: <lista das skills usadas ou "nenhuma">
+12. Subagentes Gemini nativos: <N | N/A>
+13. Conversation IDs dos subagentes: <lista | N/A>
+14. Tokens usados: input=<N> output=<N> cache_read=<N> total=<N>
     (informe N/A se a plataforma nao expor o dado)
-14. ASSET_MATERIALIZATION: <ids materializados + destinos + seedBindings aplicados | N/A>
+15. ASSET_MATERIALIZATION: <ids materializados + destinos + seedBindings aplicados | N/A>
 ```
 
 ### 2a. Materializacao de imagery/icones

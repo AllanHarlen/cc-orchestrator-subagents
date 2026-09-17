@@ -15,6 +15,7 @@ import test from "node:test";
 
 import {
   ingestPensadorHandoff,
+  inspectDataContractArtifacts,
   inspectVisualHandoff,
   listPensadorHandoffs,
 } from "../skills/orchestrator-multi-agent-development/scripts/lib/pensador-ingest.mjs";
@@ -386,5 +387,96 @@ test("inspectVisualHandoff: legacy-verbatim design on a status PARTIAL handoff s
   assert.ok(finding, "expected a LEGACY_VERBATIM_DESIGN finding");
   assert.equal(finding.severity, "warning");
   assert.equal(visual.blocking, false);
+});
+
+// ---------------------------------------------------------------------------
+// inspectDataContractArtifacts (ui-data-map / seed-plan / surface-benchmark,
+// cc-pensador >= 2.27.0)
+// ---------------------------------------------------------------------------
+
+test("inspectDataContractArtifacts: reads all three artifacts when present and valid", () => {
+  const root = fixture();
+  const handoffDir = join(root, ".pensador/app-v1");
+  const uiDataMap = { schemaVersion: 1, screens: [{ id: "s1", reads: [], writes: [], requirementRefs: ["RF-01"], dataSource: "api-contract" }] };
+  const seedPlan = { schemaVersion: 1, persistenceLayer: "database-seed", entities: [] };
+  const surfaceBenchmark = { schemaVersion: 1, surfaces: [] };
+  writeJson(join(handoffDir, "ui-data-map.json"), uiDataMap);
+  writeJson(join(handoffDir, "seed-plan.json"), seedPlan);
+  writeJson(join(handoffDir, "surface-benchmark.json"), surfaceBenchmark);
+
+  const handoff = {
+    ...baseHandoff("app"),
+    artifacts: [
+      { role: "ui-data-map", path: "ui-data-map.json", required: true },
+      { role: "seed-plan", path: "seed-plan.json", required: true },
+      { role: "surface-benchmark", path: "surface-benchmark.json", required: false },
+    ],
+  };
+  const handoffPath = join(handoffDir, "handoff.json");
+  writeJson(handoffPath, handoff);
+
+  const result = inspectDataContractArtifacts(handoff, handoffPath);
+  assert.deepEqual(result.uiDataMap, uiDataMap);
+  assert.deepEqual(result.seedPlan, seedPlan);
+  assert.deepEqual(result.surfaceBenchmark, surfaceBenchmark);
+  assert.deepEqual(result.findings, []);
+});
+
+test("inspectDataContractArtifacts: a declared but missing ui-data-map/seed-plan is a high-severity finding", () => {
+  const root = fixture();
+  const handoffDir = join(root, ".pensador/app-v1");
+  const handoff = {
+    ...baseHandoff("app"),
+    artifacts: [
+      { role: "ui-data-map", path: "ui-data-map.json", required: true },
+      { role: "seed-plan", path: "seed-plan.json", required: true },
+    ],
+  };
+  const handoffPath = join(handoffDir, "handoff.json");
+  writeJson(handoffPath, handoff);
+
+  const result = inspectDataContractArtifacts(handoff, handoffPath);
+  assert.equal(result.uiDataMap, null);
+  assert.equal(result.seedPlan, null);
+  assert.deepEqual(new Set(result.findings.map((f) => f.code)), new Set(["UI_DATA_MAP_MISSING", "SEED_PLAN_MISSING"]));
+  assert.ok(result.findings.every((f) => f.severity === "high"));
+});
+
+test("inspectDataContractArtifacts: a missing surface-benchmark is only a warning (not every project has a conversion/catalog surface)", () => {
+  const root = fixture();
+  const handoffDir = join(root, ".pensador/app-v1");
+  const handoff = { ...baseHandoff("app"), artifacts: [{ role: "surface-benchmark", path: "surface-benchmark.json", required: false }] };
+  const handoffPath = join(handoffDir, "handoff.json");
+  writeJson(handoffPath, handoff);
+
+  const result = inspectDataContractArtifacts(handoff, handoffPath);
+  assert.deepEqual(result.findings, [{ severity: "warning", code: "SURFACE_BENCHMARK_MISSING", path: result.surfaceBenchmarkPath }]);
+});
+
+test("inspectDataContractArtifacts: no roles declared at all (backend/frontend-less or pre-2.27.0 handoff) returns null fields, no findings", () => {
+  const root = fixture();
+  const handoffDir = join(root, ".pensador/app-v1");
+  const handoff = { ...baseHandoff("app"), artifacts: [] };
+  const handoffPath = join(handoffDir, "handoff.json");
+  writeJson(handoffPath, handoff);
+
+  const result = inspectDataContractArtifacts(handoff, handoffPath);
+  assert.equal(result.uiDataMap, null);
+  assert.equal(result.seedPlan, null);
+  assert.equal(result.surfaceBenchmark, null);
+  assert.deepEqual(result.findings, []);
+});
+
+test("ingestPensadorHandoff exposes dataContract alongside visualPackage in joint mode", () => {
+  const root = fixture();
+  const handoffDir = join(root, ".pensador/app-v1");
+  writeJson(join(handoffDir, "ui-data-map.json"), { schemaVersion: 1, screens: [] });
+  const handoff = { ...baseHandoff("app"), artifacts: [{ role: "ui-data-map", path: "ui-data-map.json", required: true }] };
+  writeJson(join(handoffDir, "handoff.json"), handoff);
+
+  const result = ingestPensadorHandoff({ projectRoot: root });
+  assert.equal(result.mode, "joint");
+  assert.ok(result.dataContract);
+  assert.deepEqual(result.dataContract.uiDataMap, { schemaVersion: 1, screens: [] });
 });
 

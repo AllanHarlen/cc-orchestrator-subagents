@@ -1,5 +1,55 @@
 # Changelog
 
+## [4.19.0] — 2026-09-17 — Gate de cobertura de contrato (ui-data-map), prova de persistencia na E2E, imagery por superficie
+
+Segunda rodada de correcao sobre a mesma run real (OficinaAI, 2026-09-16, apos a 4.18.0 ja em
+producao): 3 rodadas de review "APROVADO" com `gates.productionMockFallback: false` preenchido pelo
+proprio orquestrador, enquanto o painel interno inteiro lia/gravava em `localStorage` — porque so 4
+de dezenas de telas foram auditadas, nenhuma delas uma lista, e o contrato (`openapi.yaml`) tinha 21
+operacoes para 41 RFs sem que nada cruzasse tela x operacao antes do dispatch. Ver tambem
+cc-pensador 2.27.0 (metade Pensador destas mesmas correcoes).
+
+- **Novo gate `contractCoverage` (Fase 4), `scripts/validate-contract-coverage.mjs`.** Porta de
+  `scripts/lib/contract-coverage.mjs` (mesmo parser OpenAPI proprio, sem dependencia de YAML, do
+  cc-pensador — mantido em paralelo por nao haver pacote compartilhado entre os repos). Cruza cada
+  operacao de leitura/escrita do `ui-data-map.json` (role novo do Pensador, ingerido por
+  `inspectDataContractArtifacts()` em `pensador-ingest.mjs`) contra o contrato real; um gap vira task
+  de back-end **antes** de qualquer dispatch front-end, nunca contornado com dado local. Formatos
+  fora de REST/OpenAPI degradam para `applicable: false` com motivo — nunca um passe silencioso.
+  Mesmo padrao de integracao (script standalone, gate por exit-code em prosa do workflow) de
+  `validate-requirements-coverage.mjs` — nao acopla ao framework de completion gates de
+  `orchestration-state.mjs`.
+- **Prompts front-end: contrato e a unica fonte de dados, nunca client-side storage.** Novo campo de
+  contexto (`ui-data-map.json`), secao "Fonte de dados" explicando a regra em termos absolutos, novo
+  `Status: CONTRACT_GAP` (tratado como `NEEDS_SYNC` — cria a task de back-end faltante antes de
+  redespachar) e novo campo obrigatorio de retorno "Fonte de dados por tela" (uma linha por tela,
+  `id` -> operacao real consumida). Um retorno sem essa secao, ou com uma tela cuja fonte declarada
+  nao seja uma operacao do contrato, e reprovado na Fase 7.
+- **Fase 9.5 (E2E) ganha prova de persistencia mecanica, nao mais so um booleano de auto-atestado.**
+  `validate-ui-evidence.mjs` aceita `--ui-data-map` opcional: toda tela que o `ui-data-map` declara
+  precisa aparecer em `evidence.routes[]` (`SCREEN_COVERAGE_INCOMPLETE` senao — fecha a lacuna real
+  de so 4 telas terem sido auditadas), e toda tela de leitura `scope: "list"` precisa de
+  `route.persistenceProof` (criar via UI, verificar em um contexto de navegador limpo —
+  `PERSISTENCE_PROOF_MISSING` senao) — a unica checagem que distingue mecanicamente uma lista real
+  da API de um array de seed no cliente. Novo `route.storageAudit.domainEntitiesInClientStorage`:
+  uma entidade de dominio encontrada em `localStorage`/`sessionStorage`/IndexedDB e bloqueante
+  (`DOMAIN_ENTITY_IN_CLIENT_STORAGE`) mesmo com `gates.productionMockFallback: false`.
+- **`inferVisualImageryPlan`/`classifyVisualImageryTask` corrigidos: politica vem da superficie, nao
+  de palavras soltas.** `scripts/visual-imagery-plan.mjs` (fallback do modo independente) tinha o
+  mesmo bug do lado Pensador — "banner"/"hero"/"mockup" forcavam `required` mesmo sem nenhum outro
+  sinal, e uma descricao de task em ingles nunca casava (so palavras-chave pt-BR). Reescrito para
+  reconhecer superficie `conversion`/`catalog` (o sinal estrutural real) e um mandato explicito por
+  item, removendo o nivel `recommended` (agora binario: `required`/`not-applicable`, espelhando o
+  lado Pensador). `pensador-ingest.mjs` tinha o mesmo bug de contagem de `handoff-validator.mjs` do
+  lado Pensador (contava so assets `seed-demo` contra um minimo que agora e sobre imagem de
+  CONTEUDO) — corrigido para contar qualquer asset vinculado.
+- `handoff-contract.md` (secao 5, Pensador) e `handoff-validator.mjs` (`HANDOFF_ROLES_BY_STAGE`)
+  sincronizados com os tres roles novos do cc-pensador 2.27.0 (`ui-data-map`, `seed-plan`,
+  `surface-benchmark`), byte-identicos aos quatro plugins do workflow.
+
+24 testes novos/atualizados (contract-coverage, ui-evidence, pensador-ingest, visual-imagery-plan);
+suite completa: 443 passed.
+
 ## [4.18.0] — 2026-09-15 — Gates de contrato/infra na Fase 4, IDs de requisito por dominio, mutacao obrigatoria na E2E
 
 Levantamento de gaps sobre uma run real do Pensador -> Orquestrador (OficinaAI, apos a 4.17.0 ja

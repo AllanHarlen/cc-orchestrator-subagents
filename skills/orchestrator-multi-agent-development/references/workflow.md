@@ -116,8 +116,9 @@ node "${CLAUDE_SKILL_DIR}/scripts/orchestration-state.mjs" init \
 ### 1.1 Ler a especificacao fornecida
 
 - Em modo conjunto, ingira os artefatos do Pensador na ordem do handoff contract (secao 7):
-  - **Modo PRD:** `prd` → `userhistory` → `architecture` → `api-contract` → `communication-contract` → `design-system`/`design-system-files` → `ui-prototype` / `brand-assets`.
-  - **Modo Spec (OpenSpec):** confirme o estado via `openspec status --change <nome> --json` (ou `openspec show <nome> --json`) antes de ler os arquivos; ingira o change set em `openspec/changes/<nome>/` (`proposal.md`, `design.md`, `tasks.md`, `specs/` quando presente — omitido sob `skip_specs`, podendo estar aninhado em `specs/<area>/<capability>/spec.md`); derive as tasks de `tasks.md` preservando IDs/ordem (contando subtarefas aninhadas).
+  - **Modo PRD:** `prd` → `userhistory` → `architecture` → `api-contract` → `communication-contract` → `ui-data-map` → `seed-plan` → `surface-benchmark` → `design-system`/`design-system-files` → `ui-prototype` / `brand-assets`.
+  - **Modo Spec (OpenSpec):** confirme o estado via `openspec status --change <nome> --json` (ou `openspec show <nome> --json`) antes de ler os arquivos; ingira o change set em `openspec/changes/<nome>/` (`proposal.md`, `design.md`, `tasks.md`, `specs/` quando presente — omitido sob `skip_specs`, podendo estar aninhado em `specs/<area>/<capability>/spec.md`); derive as tasks de `tasks.md` preservando IDs/ordem (contando subtarefas aninhadas). `ui-data-map`/`seed-plan`/`surface-benchmark` sao comuns aos dois modos (cc-pensador >= 2.27.0).
+- **Mapa tela -> contrato (`ui-data-map`) e plano de seed (`seed-plan`):** quando presentes (`pensador-ingest.mjs` -> `inspectDataContractArtifacts()`), sao a **unica fonte de dados** permitida para cada tela nas tasks front-end da Fase 5 — nenhuma task pode persistir entidade de dominio em `localStorage`/`sessionStorage`/estado do cliente, e nenhuma task de seed pode gravar dados fora da camada `persistenceLayer: "database-seed"` que `seed-plan` fixa. Preserve os dois arquivos para a Fase 4 (gate `contractCoverage`) e a Fase 5 (prompts). Ausencia (handoff de producer < 2.27.0) degrada: sem `ui-data-map`, a Fase 4 nao pode rodar o gate de cobertura e a regra de fonte de dados da Fase 5 vira orientacao, nao verificacao mecanica — registre a degradacao em `report/workflow-log.md`.
 - Em modo independente, leia o arquivo de PRD/spec apontado pelo usuario com `Read`. Se o usuario apontar varios arquivos ou um diretorio de specs, leia todos os relevantes.
 - Nao reescreva, nao replaneje e nao reinterprete a demanda. O papel do orquestrador e **orquestrar**, nao planejar.
 - **Contrato de API:** quando houver `api-contract` (maquina-legivel), ele e a **fonte da verdade** dos contratos da Fase 4 — suba o mock a partir dele e valide o codigo contra ele (campo `validation`). O `communication-contract` e apenas a visao legivel.
@@ -332,6 +333,19 @@ Quando houver DTO C# e consumidor TypeScript:
 - documente serializer global ou atributos por campo;
 - nao aceite "bate com a interface" sem verificar o payload real.
 
+### 4.1a Cobertura de contrato (ui-data-map x api-contract) — gate `contractCoverage`
+
+Quando a ingestao trouxe `ui-data-map` (modo conjunto) ou uma tela front-end foi mapeada manualmente no modo independente (Fase 2), rode o gate ANTES de despachar qualquer task front-end — pegar aqui uma tela sem operacao correspondente e muito mais barato do que descobrir na Fase 9.5, depois que o front-end ja preencheu a lacuna com `localStorage` (defeito real de uma run: OficinaAI, 2026-09-16, 41 RFs contra 21 operacoes de `openapi.yaml`, 4 telas do painel sem endpoint de listagem, so descobertas na E2E):
+
+```bash
+node "${CLAUDE_SKILL_DIR}/scripts/validate-contract-coverage.mjs" --ui-data-map "<ui-data-map.json>" --contract "<api-contract>" [--format rest]
+```
+
+- `applicable: false` (sem `ui-data-map`, sem contrato, ou formato fora de REST/OpenAPI) nunca bloqueia — registre a degradacao em `report/workflow-log.md` e siga; nao e um passe silencioso, e um gap disclosed.
+- `ok: false` (exit 1) e **bloqueante**: cada entrada de `gaps[]` (`screenId`, `operation`) vira uma task de back-end nova (categoria `BACKEND_ONLY`, `routingReason` citando o gap, nunca "Fase N" — regra da Fase 2) antes de qualquer task front-end que dependa daquela tela ser despachada. Nao redija a tela para usar outra fonte de dados: o contrato e que esta incompleto.
+- No modo independente, monte `ui-data-map.json` voce mesmo na Fase 2 a partir das tasks front-end extraidas (mesma forma de `ui-data-map.schema.json` do Pensador: `screens[].reads[]/writes[].operation` no formato `"METODO /caminho"`, `dataSource: "api-contract"` fixo).
+- Este gate e independente de linguagem: le apenas o texto do contrato (OpenAPI/GraphQL/gRPC/AsyncAPI) e o `ui-data-map.json`, nunca codigo gerado.
+
 ### 4.2 Geracao deterministica de tipos e contratos
 
 A partir da especificacao OpenAPI/YAML/JSON ou dos contratos em `.orchestrator/runs/<nome>/contracts/`, gere tipos e DTOs fortemente tipados para a stack do projeto antes de despachar os subagentes:
@@ -429,6 +443,18 @@ arquivos que ficaram de fora, ou dividir a task por entregaveis (ver abaixo). `t
 sidecar diz por onde o prompt realmente foi (`stdin` ou `argv`); `designSystems` lista os pacotes
 Open Design entregues via `--design-system` (ver Secao 2a).
 
+### Fonte de dados front-end — contrato, nunca client-side storage
+
+Em toda task `FRONTEND_ONLY` (ou fatia front-end de `FULLSTACK`), o prompt (`subagent-prompts.md`) declara a regra em termos absolutos: a **unica** fonte de dados de qualquer tela e a operacao do contrato mapeada em `ui-data-map.json` (`dataSource: "api-contract"`, fixo). Proibido:
+
+- persistir/ler entidade de dominio via `localStorage`, `sessionStorage`, IndexedDB ou qualquer estado do cliente que sobreviva ao reload sem passar pela API;
+- credenciais de demo hardcoded no cliente que contornem a chamada real de login;
+- popular uma tela com dados fixos ("seed" local ao componente) quando o contrato ja tem a operacao correspondente.
+
+Quando a task precisa de uma tela sem operacao correspondente no `ui-data-map`/contrato (deveria ter sido pego pelo gate `contractCoverage` da Fase 4, mas uma task ad-hoc pode chegar sem passar por ele), o subagente retorna `Status: CONTRACT_GAP` em vez de inventar uma fonte de dados alternativa. O orquestrador trata como `NEEDS_SYNC` (mesma rotina de `references/contracts.md` "Quando o contrato muda"): cria a task de back-end faltante, atualiza o contrato/`ui-data-map`, e so entao redespacha a task front-end.
+
+O retorno de toda task front-end passa a ter a secao obrigatoria **"Fonte de dados por tela"** — uma linha por tela tocada, citando o `id` do `ui-data-map` (ou a rota, no modo independente) e a operacao real consumida (`GET /caminho`). Um retorno sem essa secao, ou com uma tela cuja fonte declarada nao seja uma operacao do contrato, e reprovado na Fase 7 antes de integrar — nao espere a Fase 9.5 para descobrir.
+
 ### Orcamento indicativo de prompt AGY/Codex (24.000 chars)
 
 Antes de delegar, meca o arquivo persistido (nao conte manualmente):
@@ -512,7 +538,7 @@ Cada prompt deve incluir:
 
 No modo conjunto, o Pensador ja tomou a decisao de imagery e publicou `assets/manifest.json`. Preserve `project-baseline.json.visualImageryPlan`; politica `required` sem o minimo de assets vinculados bloqueia a ingestao/materializacao e deve ser corrigida na origem. Nao regenere silenciosamente um pacote autoritativo.
 
-No modo independente, a Fase 2 e proprietaria da decisao: catalogo/vitrine de pecas, equipamentos, produtos ou servicos gera uma task visual AGY obrigatoria com minimo 3 imagens; landing page, homepage e area publica/institucional/marketing gera uma task recomendada com minimo 1, dispensavel apenas com justificativa. Execute uma chamada sequencial `--generate-image` por arquivo e exija `AGY_IMAGE_RESULT` (`count: 1`, destino, bytes e SHA-256). Depois vincule a `src`/import e, em catalogos, ao seed/registro real. O browser gate (Fase 9, `visualAudit`) comprova o resultado; arquivo solto nao conclui a task.
+No modo independente, a Fase 2 e proprietaria da decisao: rode `node "${CLAUDE_SKILL_DIR}/scripts/visual-imagery-plan.mjs" --text "<descricao da task>"` para cada task front-end. A politica vem da SUPERFICIE da task, nao de palavras soltas ("hero"/"banner"/"mockup" sozinhas nao bastam): catalogo/vitrine de pecas, equipamentos, produtos ou servicos, OU site/pagina/area publica, landing page, homepage — ambas geram uma task visual AGY **obrigatoria** com minimo 3 imagens; um mandato explicito por item ("upload de foto do produto") tambem forca `required`, independente de superficie. Sem nenhum desses sinais, `not-applicable` — nao gere imagem. Execute uma chamada sequencial `--generate-image` por arquivo e exija `AGY_IMAGE_RESULT` (`count: 1`, destino, bytes e SHA-256). Depois vincule a `src`/import e, em catalogos, ao seed/registro real. O browser gate (Fase 9, `visualAudit`) comprova o resultado; arquivo solto nao conclui a task.
 
 ### Verificacao de skills compativeis
 
@@ -847,8 +873,9 @@ Isso **nao e o mesmo** que o "N/A" do paragrafo acima (front-end inexistente ou 
    - para cada rota que o PRD/CA descreve como contendo imagem, execute `document.querySelectorAll('img[src]:not([src=""])')` (ou assercao Playwright equivalente) e registre ao menos um `<img src>` real e nao vazio no DOM; tokens computados, placeholders CSS ou a mera existencia do arquivo nao contam como imagem renderizada;
    - nenhum fallback mock silencioso, erro HTTP mascarado, token CSS indefinido ou valor visual hardcoded fora da allowlist;
    - consistencia monetaria, sessao preservada no refresh/deep link e navegacao equivalente ao design-contract.
+   - **prova de persistencia real, nao so "200 e a tela mudou".** Uma run real (OficinaAI, 2026-09-16) teve 3 rodadas de review "APROVADO" com `gates.productionMockFallback: false` preenchido pelo proprio orquestrador, enquanto o painel interno inteiro lia/gravava em `localStorage` — porque so 4 de dezenas de telas foram auditadas, e nenhuma das 4 era uma tela de listagem. Quando houver `ui-data-map.json` (Fase 1.1), **toda tela** que ele declara precisa aparecer em `evidence.routes[]` — nao uma amostra. Para toda tela com leitura `scope: "list"`, crie um registro pela UI, **abra um contexto de navegador limpo** (aba anonima/nova sessao) e confirme que o registro **ainda existe** — isso e o que `route.persistenceProof` (`validate-ui-evidence.mjs`) exige e o que mecanicamente distingue uma lista real da API de um array de seed no cliente. Inspecione tambem `localStorage`/`sessionStorage`/IndexedDB no DevTools/Playwright e registre em `route.storageAudit.domainEntitiesInClientStorage` qualquer chave de entidade de dominio encontrada — uma lista nao-vazia ali e bloqueante (`DOMAIN_ENTITY_IN_CLIENT_STORAGE`), mesmo com `gates.productionMockFallback: false`.
 5. **Capture evidencia**: screenshot e/ou o resumo de console+network dos fluxos exercitados, salvos em `.orchestrator/runs/<slug>/review/e2e-verification.md` (e screenshots em `.orchestrator/runs/<slug>/review/screenshots/`).
-6. Grave `review/ui-evidence.json`, rode `validate-ui-evidence.mjs --evidence <arquivo>` e somente entao feche `gate --gate visualAudit --status DONE --evidence file:review/ui-evidence.json`.
+6. Grave `review/ui-evidence.json`, rode `validate-ui-evidence.mjs --evidence <arquivo> [--ui-data-map <ui-data-map.json>]` — com `--ui-data-map`, o validador tambem cruza cada tela declarada contra `evidence.routes[]` (`SCREEN_COVERAGE_INCOMPLETE` se faltar) e exige `persistenceProof` em toda tela de lista (`PERSISTENCE_PROOF_MISSING`) — e somente entao feche `gate --gate visualAudit --status DONE --evidence file:review/ui-evidence.json`.
 
 **Achados desta fase sao BLOQUEANTES** como qualquer review: registre em `run/monitoring.md`/`report/workflow-log.md`, crie tasks de correcao, corrija pela Fase 7 e **re-verifique no navegador** antes de aprovar. So depois que os fluxos criticos passarem no navegador o orquestrador pode marcar a entrega como `DONE`. Se a ferramenta de navegador nao estiver disponivel no ambiente, **nao invente aprovacao**: registre a limitacao e marque o `report/handoff.json` como `PARTIAL` com o gap explicito ("verificacao E2E no navegador nao executada").
 

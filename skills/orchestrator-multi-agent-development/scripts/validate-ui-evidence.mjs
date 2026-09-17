@@ -35,6 +35,25 @@ const BLOCKING_FLAGS = [
  *     keys actually inspected in the browser) must be empty — a non-empty
  *     list is exactly the OficinaAI painel-data-context.tsx defect.
  */
+/**
+ * `route.persistenceProof` must actually assert the two concrete claims the
+ * docstring above promises — `true` alone (a bare flag) is accepted as a
+ * deliberate shorthand, but an OBJECT form must carry both named booleans
+ * set to `true`. An empty `{}`, or an object missing/false-ing either
+ * field, satisfies neither: it previously passed this check (`typeof ===
+ * "object"` alone was truthy) while proving nothing, defeating the one
+ * check meant to mechanically catch a repeat of the exact self-attestation
+ * failure this whole cross-check exists to prevent.
+ *
+ * @param {unknown} value
+ * @returns {boolean}
+ */
+function isPersistenceProofSatisfied(value) {
+  if (value === true) return true;
+  if (typeof value !== "object" || value === null) return false;
+  return value.createdViaUi === true && value.verifiedInFreshContext === true;
+}
+
 export function validateUiEvidence(evidence, { baseDir = process.cwd(), uiDataMap = null } = {}) {
   const findings = [];
   const add = (code, message, path = null) => findings.push({ severity: "high", code, message, path });
@@ -75,7 +94,7 @@ export function validateUiEvidence(evidence, { baseDir = process.cwd(), uiDataMa
         continue;
       }
       const hasListRead = Array.isArray(screen.reads) && screen.reads.some((read) => read?.scope === "list");
-      if (hasListRead && matchedRoute.persistenceProof !== true && typeof matchedRoute.persistenceProof !== "object") {
+      if (hasListRead && !isPersistenceProofSatisfied(matchedRoute.persistenceProof)) {
         add("PERSISTENCE_PROOF_MISSING", `screen "${screen.id}" reads a list but route "${matchedRoute.route}" carries no persistenceProof (create via UI, verify in a fresh browser context)`, matchedRoute.route);
       }
     }

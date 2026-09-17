@@ -109,7 +109,19 @@ export function parseOpenApiOperations(contractText) {
   const block = lines.slice(blockStart, blockEnd);
 
   const indentOf = (line) => line.match(/^(\s*)/)[1].length;
-  const isPathKeyLine = (line) => /^\s*\/[^\s:]*:\s*(#.*)?$/.test(line);
+  // A path key is `/foo:`, optionally wrapped in single or double quotes
+  // (both are valid, common YAML — some OpenAPI generators/authors quote
+  // every mapping key as a style choice). Matching only the bare form used
+  // to make a SINGLE quoted path key invisible to this scan, which silently
+  // swallowed the quoted path's own operations AND corrupted the chunk
+  // boundary for whichever unquoted path preceded it (the quoted line's
+  // shallower indent got folded into the previous path's "shallowest line"
+  // heuristic below, hiding that path's real operations too).
+  const isPathKeyLine = (line) => /^\s*(?:"\/[^"]*"|'\/[^']*'|\/[^\s:]*):\s*(#.*)?$/.test(line);
+  const pathKeyOf = (line) => {
+    const match = line.match(/^\s*(?:"(\/[^"]*)"|'(\/[^']*)'|(\/[^\s:]*)):\s*(#.*)?$/);
+    return match ? (match[1] ?? match[2] ?? match[3]) : null;
+  };
   const nonEmpty = (line) => line.trim() !== '' && !/^\s*#/.test(line);
 
   let pathKeyIndent = null;
@@ -126,16 +138,18 @@ export function parseOpenApiOperations(contractText) {
   for (let index = 0; index < pathKeyIndices.length; index += 1) {
     const start = pathKeyIndices[index];
     const end = pathKeyIndices[index + 1] ?? block.length;
-    const pathMatch = block[start].trim().match(/^(\/[^\s:]*):\s*(#.*)?$/);
-    if (!pathMatch) continue;
-    const path = pathMatch[1];
+    const path = pathKeyOf(block[start]);
+    if (!path) continue;
 
     const chunk = block.slice(start + 1, end).filter(nonEmpty);
     if (chunk.length === 0) continue;
     const methodIndent = Math.min(...chunk.map(indentOf));
     for (const line of chunk) {
       if (indentOf(line) !== methodIndent) continue;
-      const methodMatch = line.trim().match(/^([A-Za-z]+):\s*(#.*)?$/);
+      // Trailing content after the colon (an inline flow value like `{}`,
+      // or nothing, or a comment) is allowed — only the key name decides
+      // whether this is an operation, via the HTTP_METHODS check below.
+      const methodMatch = line.trim().match(/^([A-Za-z]+):(?:\s|$)/);
       if (methodMatch && HTTP_METHODS.has(methodMatch[1].toLowerCase())) {
         operations.push({ method: methodMatch[1].toUpperCase(), path });
       }

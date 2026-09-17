@@ -25,7 +25,7 @@
  */
 import path from 'node:path';
 
-const normalize = (value) => String(value ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+const normalize = (value) => String(value ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
 
 /** Bilingual surface signals — same set cc-pensador's SECONDARY_SURFACE_SIGNALS.conversion/catalog uses. */
 const CONVERSION_SURFACE_RE = /\b(?:site publico|pagina publica|area publica|landing page|vitrine institucional|captacao de leads?|formulario de orcamento|formulario de contato|homepage|pagina inicial|marketing|public site|public page|public facing page|marketing page|lead capture)\b/;

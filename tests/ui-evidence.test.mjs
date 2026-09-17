@@ -70,6 +70,32 @@ test("ui-data-map cross-check: a list screen's evidenced route without persisten
   assert.ok(result.findings.some((f) => f.code === "PERSISTENCE_PROOF_MISSING"));
 });
 
+test("ui-data-map cross-check: an empty {} persistenceProof does NOT satisfy the check (regression: used to pass by typeof-object alone)", () => {
+  const { root, evidence } = validEvidence();
+  evidence.routes[0].persistenceProof = {};
+  const uiDataMap = { screens: [{ id: "public-services", requirementRefs: ["RF-001"], reads: [{ operation: "GET /services", scope: "list" }] }] };
+  const result = validateUiEvidence(evidence, { baseDir: root, uiDataMap });
+  assert.equal(result.status, "BLOCKED");
+  assert.ok(result.findings.some((f) => f.code === "PERSISTENCE_PROOF_MISSING"));
+});
+
+test("ui-data-map cross-check: a partial persistenceProof (only one of the two named claims true) does NOT satisfy the check", () => {
+  const { root, evidence } = validEvidence();
+  evidence.routes[0].persistenceProof = { createdViaUi: true, verifiedInFreshContext: false };
+  const uiDataMap = { screens: [{ id: "public-services", requirementRefs: ["RF-001"], reads: [{ operation: "GET /services", scope: "list" }] }] };
+  const result = validateUiEvidence(evidence, { baseDir: root, uiDataMap });
+  assert.equal(result.status, "BLOCKED");
+  assert.ok(result.findings.some((f) => f.code === "PERSISTENCE_PROOF_MISSING"));
+});
+
+test("ui-data-map cross-check: persistenceProof: true (bare shorthand) still satisfies the check", () => {
+  const { root, evidence } = validEvidence();
+  evidence.routes[0].persistenceProof = true;
+  const uiDataMap = { screens: [{ id: "public-services", requirementRefs: ["RF-001"], reads: [{ operation: "GET /services", scope: "list" }] }] };
+  const result = validateUiEvidence(evidence, { baseDir: root, uiDataMap });
+  assert.equal(result.status, "PASS");
+});
+
 test("ui-data-map cross-check: passes once the matching route carries persistenceProof", () => {
   const { root, evidence } = validEvidence();
   evidence.routes[0].persistenceProof = { createdViaUi: true, verifiedInFreshContext: true };

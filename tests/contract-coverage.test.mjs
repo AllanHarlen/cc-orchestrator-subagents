@@ -73,6 +73,56 @@ test("parseOpenApiOperations: never trips on a schema property literally named a
   assert.deepEqual(parseOpenApiOperations(text), [{ method: "POST", path: "/webhooks" }]);
 });
 
+test("parseOpenApiOperations: parses quoted path keys (single and double quotes)", () => {
+  const doubleQuoted = `paths:
+  "/ordens-servico":
+    get:
+      responses:
+        '200': { description: OK }
+`;
+  assert.deepEqual(parseOpenApiOperations(doubleQuoted), [{ method: "GET", path: "/ordens-servico" }]);
+
+  const singleQuoted = `paths:
+  '/veiculos':
+    post:
+      responses:
+        '201': { description: Created }
+`;
+  assert.deepEqual(parseOpenApiOperations(singleQuoted), [{ method: "POST", path: "/veiculos" }]);
+});
+
+test("parseOpenApiOperations: a single quoted path key does not swallow/hide the operations of an unquoted path around it", () => {
+  // Regression: a quoted path key was invisible to the old path-key matcher,
+  // so it never closed the PRECEDING unquoted path's chunk -- the quoted
+  // line's shallower indent then corrupted the "shallowest line in the
+  // chunk is the method key" heuristic, hiding the preceding path's real
+  // operations too. Both /a and /b must be found here.
+  const mixed = `paths:
+  /a:
+    get:
+      responses: {}
+  '/b':
+    post:
+      responses: {}
+  /c:
+    delete:
+      responses: {}
+`;
+  assert.deepEqual(parseOpenApiOperations(mixed), [
+    { method: "GET", path: "/a" },
+    { method: "POST", path: "/b" },
+    { method: "DELETE", path: "/c" },
+  ]);
+});
+
+test('parseOpenApiOperations: detects a method with an inline flow-style value ("get: {}")', () => {
+  const text = `paths:
+  /health:
+    get: {}
+`;
+  assert.deepEqual(parseOpenApiOperations(text), [{ method: "GET", path: "/health" }]);
+});
+
 test("parseOpenApiOperations: parses JSON OpenAPI documents", () => {
   const doc = JSON.stringify({ paths: { "/veiculos": { get: {}, post: {} } } });
   assert.deepEqual(parseOpenApiOperations(doc), [

@@ -608,6 +608,12 @@ const checks = {
   },
   runtime: {
     "node-sqlite-fts5": checkNodeSqlite(),
+    // Git nunca e obrigatorio (fica fora de REQUIRED_BY_CHECK.runtime abaixo):
+    // sem ele, o planejamento de worktree so degrada para execucao serializada
+    // (worktree-manager.mjs::planTaskWorktrees, reason "GIT_UNAVAILABLE").
+    // Ainda assim precisa ficar visivel no relatorio, entao vira aviso
+    // explicito no loop de MCP logo abaixo.
+    git: checkCli("git"),
   },
   cli: {
     agy: checkCli("agy", {
@@ -684,6 +690,18 @@ for (const [name, result] of Object.entries(checks.optional.mcp)) {
     name,
     required: false,
     reason: result.reason ?? "NOT_DETECTED",
+  });
+}
+
+// Git ausente e sempre aviso, nunca bloqueio: worktree-manager.mjs degrada
+// silenciosamente para execucao serializada quando `inspectGit` reporta
+// indisponibilidade (mesmo padrao do loop de MCP acima).
+if (!checks.runtime.git.ok) {
+  warnings.push({
+    category: "runtime",
+    name: "git",
+    required: false,
+    reason: "NOT_INSTALLED",
   });
 }
 

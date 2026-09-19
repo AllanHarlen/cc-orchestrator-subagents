@@ -17,6 +17,7 @@ import {
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { validateUiEvidence } from "../validate-ui-evidence.mjs";
+import { validateHandoff } from "./handoff-validator.mjs";
 import {
   ARTIFACT_LAYOUT_VERSION,
   SUPPORTED_ARTIFACT_LAYOUT_VERSIONS,
@@ -28,12 +29,16 @@ import {
   runRootCandidates,
 } from "./artifact-layout.mjs";
 import {
+  DEFAULT_QUOTA_FALLBACK_CHAIN,
   EXECUTORS,
   EXECUTOR_SOURCE_PROJECT_CONFIG,
   PROJECT_CONFIG_SCHEMA_VERSION,
   ProjectConfigError,
+  QUOTA_FALLBACK_FIELD,
+  QUOTA_FALLBACK_VALUES,
   ROLES,
   diffProjectConfig,
+  diffQuotaFallbackChain,
   projectConfigPath,
   readProjectConfig,
   resolveExecutorForCategory,
@@ -578,6 +583,17 @@ function validateProjectConfigSnapshot(snapshot) {
       );
     }
   }
+  // Retrocompativel: snapshot gravado antes desta feature nao tem o campo.
+  if (
+    snapshot.quotaFallbackChain !== undefined
+    && !QUOTA_FALLBACK_VALUES.includes(snapshot.quotaFallbackChain)
+  ) {
+    throw new OrchestrationStateError(
+      "INVALID_PROJECT_CONFIG_SNAPSHOT",
+      `state.projectConfig.quotaFallbackChain must be one of ${QUOTA_FALLBACK_VALUES.join(", ")}`,
+      { received: snapshot.quotaFallbackChain ?? null, accepted: [...QUOTA_FALLBACK_VALUES] },
+    );
+  }
 }
 
 function assertRunMutable(state, operation = "mutate") {
@@ -727,6 +743,12 @@ export function validateState(state) {
   }
   validateCompletionGates(state.completionGates);
   validateProjectConfigSnapshot(state.projectConfig);
+  if (state.quotaHandoffs !== undefined && !Array.isArray(state.quotaHandoffs)) {
+    throw new OrchestrationStateError(
+      "INVALID_QUOTA_HANDOFFS",
+      "state.quotaHandoffs must be an array when present",
+    );
+  }
   return state;
 }
 
@@ -810,6 +832,10 @@ function reduceEvent(previousState, event) {
       state.projectConfig = clone(payload.projectConfig);
       state.status = payload.runStatus;
       state.currentWave = payload.currentWave;
+      break;
+    case "QUOTA_HANDOFF_RECORDED":
+    case "QUOTA_HANDOFF_UPDATED":
+      state.quotaHandoffs = clone(payload.quotaHandoffs);
       break;
     default:
       throw new OrchestrationStateError(
@@ -1199,6 +1225,11 @@ function projectConfigSnapshot(config, source) {
     source: source ?? "default",
     updatedAt: config.updatedAt ?? null,
     roles,
+    // Campo opt-in (nao um papel de executor): congelado junto dos quatro
+    // papeis pela mesma regra de "Estabilidade durante a Run"
+    // (project-config.md). Ausente em snapshot legado (Run anterior a esta
+    // feature) resolve para o default no drift, nunca para `undefined`.
+    quotaFallbackChain: config[QUOTA_FALLBACK_FIELD] ?? DEFAULT_QUOTA_FALLBACK_CHAIN,
   };
 }
 
@@ -1221,6 +1252,21 @@ function normalizeProvidedProjectConfig(input) {
     const value = String(roleValues?.[role] ?? "").trim().toLowerCase();
     if (!EXECUTOR_SET.has(value)) throw invalidProjectConfig(role, roleValues?.[role]);
     config[role] = value;
+  }
+  const rawQuotaFallback = input[QUOTA_FALLBACK_FIELD] ?? roleValues?.[QUOTA_FALLBACK_FIELD];
+  if (rawQuotaFallback === undefined || rawQuotaFallback === null || String(rawQuotaFallback).trim() === "") {
+    config[QUOTA_FALLBACK_FIELD] = DEFAULT_QUOTA_FALLBACK_CHAIN;
+  } else {
+    const normalized = String(rawQuotaFallback).trim().toLowerCase();
+    if (!QUOTA_FALLBACK_VALUES.includes(normalized)) {
+      throw new OrchestrationStateError(
+        "INVALID_PROJECT_CONFIG",
+        `Project config field ${QUOTA_FALLBACK_FIELD} must be one of ${QUOTA_FALLBACK_VALUES.join(", ")}, `
+          + `received ${JSON.stringify(String(rawQuotaFallback))}`,
+        { field: QUOTA_FALLBACK_FIELD, received: rawQuotaFallback, accepted: [...QUOTA_FALLBACK_VALUES] },
+      );
+    }
+    config[QUOTA_FALLBACK_FIELD] = normalized;
   }
   return { exists: true, source: input.source ?? "provided", path: input.path ?? null, config };
 }
@@ -1312,9 +1358,13 @@ function computeProjectConfigDrift(state, projectRoot) {
     };
   }
 
-  const differences = diffProjectConfig(snapshot.roles ?? null, file.config).map((entry) => ({
-    ...entry,
-  }));
+  const snapshotQuotaFallback = {
+    [QUOTA_FALLBACK_FIELD]: snapshot.quotaFallbackChain ?? DEFAULT_QUOTA_FALLBACK_CHAIN,
+  };
+  const differences = [
+    ...diffProjectConfig(snapshot.roles ?? null, file.config),
+    ...diffQuotaFallbackChain(snapshotQuotaFallback, file.config),
+  ].map((entry) => ({ ...entry }));
   return {
     ...base,
     changed: differences.length > 0,
@@ -3410,10 +3460,13 @@ export function applyProjectConfigToRun(artifactDir, options = {}) {
     const projectRoot = resolveProjectRoot(artifactDir, options);
     const resolvedConfig = loadProjectConfigForRun(projectRoot, options);
     const snapshot = projectConfigSnapshot(resolvedConfig.config, resolvedConfig.source);
-    const differences = diffProjectConfig(
-      state.projectConfig?.roles ?? null,
-      snapshot.roles,
-    ).map((entry) => ({ ...entry }));
+    const differences = [
+      ...diffProjectConfig(state.projectConfig?.roles ?? null, snapshot.roles),
+      ...diffQuotaFallbackChain(
+        { [QUOTA_FALLBACK_FIELD]: state.projectConfig?.quotaFallbackChain ?? DEFAULT_QUOTA_FALLBACK_CHAIN },
+        { [QUOTA_FALLBACK_FIELD]: snapshot.quotaFallbackChain },
+      ),
+    ].map((entry) => ({ ...entry }));
     const now = iso(options.now);
     const reason = options.reason
       ?? "User adopted the current project configuration for tasks that were not dispatched yet";
@@ -3748,6 +3801,149 @@ export function updateTaskWorkspace(artifactDir, taskId, workspace, options = {}
   }, options);
 }
 
+/** Estados aceitos para `quotaHandoffs[].quotaRecoveryCheck`. */
+export const QUOTA_RECOVERY_CHECK_STATUSES = Object.freeze(["PENDING", "RESTORED"]);
+const QUOTA_RECOVERY_CHECK_SET = new Set(QUOTA_RECOVERY_CHECK_STATUSES);
+
+/**
+ * Valida e normaliza uma entrada de `state.json.quotaHandoffs[]` (contrato de
+ * repasse do fallback de cota opt-in `quotaFallbackChain`).
+ *
+ * Mesmo formato descrito em `references/project-config.md`/`SKILL.md`:
+ * `{ taskId, wave, fromExecutor, toExecutor, reasonCode, chainPosition,
+ * timestamp, quotaRecoveryCheck }`. `fromExecutor`/`toExecutor` pertencem ao
+ * conjunto `codex`/`agy`/`claude-code` (o mesmo de `EXECUTORS`); `chainPosition`
+ * e a posicao (1-based) do elo escolhido na cadeia fixa `claude-code, codex,
+ * agy`.
+ */
+function normalizeQuotaHandoffEntry(entry, { now } = {}) {
+  const taskId = String(entry?.taskId ?? "").trim();
+  if (!taskId) {
+    throw new OrchestrationStateError("INVALID_QUOTA_HANDOFF", "quotaHandoff.taskId is required");
+  }
+  const fromExecutor = String(entry?.fromExecutor ?? "").trim().toLowerCase();
+  if (!EXECUTOR_SET.has(fromExecutor)) {
+    throw new OrchestrationStateError(
+      "INVALID_QUOTA_HANDOFF",
+      `quotaHandoff.fromExecutor must be one of ${EXECUTORS.join(", ")}`,
+      { field: "fromExecutor", received: entry?.fromExecutor ?? null },
+    );
+  }
+  const toExecutor = String(entry?.toExecutor ?? "").trim().toLowerCase();
+  if (!EXECUTOR_SET.has(toExecutor)) {
+    throw new OrchestrationStateError(
+      "INVALID_QUOTA_HANDOFF",
+      `quotaHandoff.toExecutor must be one of ${EXECUTORS.join(", ")}`,
+      { field: "toExecutor", received: entry?.toExecutor ?? null },
+    );
+  }
+  if (fromExecutor === toExecutor) {
+    throw new OrchestrationStateError(
+      "INVALID_QUOTA_HANDOFF",
+      "quotaHandoff.fromExecutor and toExecutor must differ",
+    );
+  }
+  const reasonCode = String(entry?.reasonCode ?? "").trim();
+  if (!reasonCode) {
+    throw new OrchestrationStateError("INVALID_QUOTA_HANDOFF", "quotaHandoff.reasonCode is required");
+  }
+  const chainPosition = Number(entry?.chainPosition);
+  if (!Number.isInteger(chainPosition) || chainPosition < 1) {
+    throw new OrchestrationStateError(
+      "INVALID_QUOTA_HANDOFF",
+      "quotaHandoff.chainPosition must be a positive integer",
+      { field: "chainPosition", received: entry?.chainPosition ?? null },
+    );
+  }
+  const quotaRecoveryCheck = String(entry?.quotaRecoveryCheck ?? "PENDING").toUpperCase();
+  if (!QUOTA_RECOVERY_CHECK_SET.has(quotaRecoveryCheck)) {
+    throw new OrchestrationStateError(
+      "INVALID_QUOTA_HANDOFF",
+      `quotaHandoff.quotaRecoveryCheck must be one of ${QUOTA_RECOVERY_CHECK_STATUSES.join(", ")}`,
+      { field: "quotaRecoveryCheck", received: entry?.quotaRecoveryCheck ?? null },
+    );
+  }
+  return {
+    taskId,
+    wave: entry?.wave ?? null,
+    fromExecutor,
+    toExecutor,
+    reasonCode,
+    chainPosition,
+    timestamp: entry?.timestamp ?? iso(now),
+    quotaRecoveryCheck,
+  };
+}
+
+/**
+ * Grava uma entrada em `state.json.quotaHandoffs[]`: o contrato de repasse do
+ * fallback de cota opt-in (`quotaFallbackChain`, `Politica de quota` no
+ * SKILL.md). Mesmo padrao de `updateTaskWorkspace` — grava uma sub-estrutura
+ * do estado sem tocar `events.jsonl` diretamente — mas o repasse nao pertence a
+ * uma unica task workspace, entao vive num array proprio no topo do estado.
+ *
+ * Nunca reabre nem reexecuta a task: apenas registra a troca de Executor para
+ * telemetria/auditoria. `scripts/lib/quota-fallback.mjs::recordQuotaHandoff` e
+ * a camada fina que os consumidores chamam.
+ */
+export function appendQuotaHandoff(artifactDir, entry, options = {}) {
+  return withLock(artifactDir, () => {
+    const state = loadRun(artifactDir, { repairSnapshot: true }).state;
+    assertRunMutable(state, "record a quota handoff");
+    const normalized = normalizeQuotaHandoffEntry(entry, { now: options.now });
+    const quotaHandoffs = [...(state.quotaHandoffs ?? []), normalized];
+    const committed = commitEvent(artifactDir, state, "QUOTA_HANDOFF_RECORDED", { quotaHandoffs }, options);
+    return {
+      state: committed.state,
+      event: committed.event,
+      quotaHandoff: normalized,
+      quotaHandoffs: committed.state.quotaHandoffs,
+    };
+  }, options);
+}
+
+/** Le `state.json.quotaHandoffs[]` sem mutar o estado. */
+export function readQuotaHandoffs(artifactDir, options = {}) {
+  const { state } = loadRun(artifactDir, options);
+  return state.quotaHandoffs ?? [];
+}
+
+/**
+ * Atualiza `quotaRecoveryCheck` das entradas de `taskId` em `quotaHandoffs[]`
+ * (ciclo de monitoramento por heartbeat/sweep, secao "Monitoramento" do plano
+ * de fallback de cota). Puramente informativo: nunca reabre nem reexecuta a
+ * task, so atualiza o campo de acompanhamento.
+ */
+export function markQuotaHandoffRecoveryChecked(artifactDir, taskId, status, options = {}) {
+  const normalizedStatus = String(status ?? "").toUpperCase();
+  if (!QUOTA_RECOVERY_CHECK_SET.has(normalizedStatus)) {
+    throw new OrchestrationStateError(
+      "INVALID_QUOTA_HANDOFF",
+      `quotaRecoveryCheck must be one of ${QUOTA_RECOVERY_CHECK_STATUSES.join(", ")}`,
+      { field: "quotaRecoveryCheck", received: status ?? null },
+    );
+  }
+  return withLock(artifactDir, () => {
+    const state = loadRun(artifactDir, { repairSnapshot: true }).state;
+    const existing = state.quotaHandoffs ?? [];
+    let touched = false;
+    const quotaHandoffs = existing.map((item) => {
+      if (item.taskId !== taskId) return item;
+      touched = true;
+      return { ...item, quotaRecoveryCheck: normalizedStatus };
+    });
+    if (!touched) {
+      throw new OrchestrationStateError(
+        "QUOTA_HANDOFF_NOT_FOUND",
+        `No quota handoff recorded for task ${taskId}`,
+        { taskId },
+      );
+    }
+    const committed = commitEvent(artifactDir, state, "QUOTA_HANDOFF_UPDATED", { quotaHandoffs }, options);
+    return { state: committed.state, event: committed.event, quotaHandoffs: committed.state.quotaHandoffs };
+  }, options);
+}
+
 export function requestRunCancellation(artifactDir, options = {}) {
   if (!options.reason) {
     throw new OrchestrationStateError(
@@ -3953,6 +4149,7 @@ function completionAudit(artifactDir, state) {
   const missingArtifacts = requiredArtifacts.filter(
     (name) => !artifactExists(artifactDir, name),
   );
+  const invalidHandoff = handoffValidationFindings(artifactDir);
   const phaseComplete = Number(state.lastSafePhase) >= 12 &&
     Number(state.phase) === 12 &&
     state.phaseStatus === "DONE";
@@ -3971,6 +4168,7 @@ function completionAudit(artifactDir, state) {
     waivedGates.length === 0 &&
     invalidDelegations.length === 0 &&
     missingArtifacts.length === 0 &&
+    invalidHandoff.length === 0 &&
     requirementsEvidence.valid;
   return {
     taskCount: tasks.length,
@@ -3997,10 +4195,28 @@ function completionAudit(artifactDir, state) {
       code: "DELEGATION_WITHOUT_NEXT_STAGE",
     })),
     missingArtifacts,
+    invalidHandoff,
     requirementsEvidence,
     recommendedRunStatus: complete ? "DONE" : "PARTIAL",
     complete,
   };
+}
+
+/**
+ * Findings de `validateHandoff()` sobre o `handoff.json` da run (vazio quando valido ou ausente —
+ * a presenca ja e exigida por `requiredArtifacts`). Um handoff escrito a mao, sem `handoffVersion`,
+ * `stage`, `producer`, ... ja foi entregue como concluido numa run real do Pensador; aqui ele
+ * impede o `DONE` em vez de deixar o proximo estagio degradar para descoberta por convencao.
+ */
+function handoffValidationFindings(artifactDir) {
+  const resolved = resolveArtifact(artifactDir, "handoff.json");
+  if (!resolved) return [];
+  try {
+    const result = validateHandoff(JSON.parse(readFileSync(resolved.path, "utf8")));
+    return result.ok ? [] : (result.errors ?? []).map((error) => ({ code: error.code, path: error.path ?? null }));
+  } catch (error) {
+    return [{ code: "HANDOFF_NOT_JSON", path: null, message: error.message }];
+  }
 }
 
 /** Le `nextStage.consumer` de `report/handoff.json`, ou `null` quando o

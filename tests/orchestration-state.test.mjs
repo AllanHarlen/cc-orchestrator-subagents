@@ -38,6 +38,25 @@ import { writeProjectConfig } from "../skills/orchestrator-multi-agent-developme
 
 const temporaryRoots = [];
 
+/** A handoff that passes validateHandoff(): the completion audit now rejects a hand-written `{}`. */
+const VALID_HANDOFF = `${JSON.stringify({
+  handoffVersion: 1,
+  stage: "orchestrador",
+  slug: "fixture",
+  producer: { plugin: "cc-orchestrador-subagents", version: "4.21.0" },
+  artifactRoot: ".orchestration/fixture",
+  status: "DONE",
+  createdAt: "2026-09-19T10:00:00.000Z",
+  updatedAt: "2026-09-19T10:00:00.000Z",
+  summary: "Implementacao completa, reviews aprovados, E2E verificado.",
+  upstream: null,
+  artifacts: [
+    { role: "implementation-report", path: "implementation-report.md", required: true },
+    { role: "review-final", path: "review-final.md", required: true },
+  ],
+  nextStage: { consumer: "cc-executor-subagents", entrypoint: "/executor", instructions: "Review plano-vs-entrega e ajustes finos." },
+}, null, 2)}\n`;
+
 function fixture(options = {}) {
   const root = mkdtempSync(join(process.cwd(), ".tmp-state-test-"));
   temporaryRoots.push(root);
@@ -98,7 +117,7 @@ function completeRun(root, artifactDir) {
     "learning-report.md",
     "monitoring.md",
   ]) {
-    writeFileSync(join(artifactDir, name), name === "handoff.json" ? "{}\n" : `# ${name}\n`, "utf8");
+    writeFileSync(join(artifactDir, name), name === "handoff.json" ? VALID_HANDOFF : `# ${name}\n`, "utf8");
   }
   writeFileSync(join(artifactDir, "desktop.png"), "desktop", "utf8");
   writeFileSync(join(artifactDir, "mobile.png"), "mobile", "utf8");
@@ -521,6 +540,31 @@ test("run completion is explicit and refuses incomplete tasks", () => {
     () => resumeRunAtDirectory(artifactDir, { projectRoot: root }),
     (error) => error instanceof OrchestrationStateError && error.code === "RUN_TERMINAL",
   );
+});
+
+test("run cannot be DONE with a hand-written handoff.json that fails validateHandoff()", () => {
+  const { root, artifactDir } = fixture();
+  initRun({ projectRoot: root, artifactDir, slug: "demo-run", runId: "run-invalid-handoff" });
+  completeRun(root, artifactDir);
+  assert.equal(auditRunCompletion(artifactDir).complete, true);
+
+  // the defect from a real run: no handoffVersion / stage / producer / artifactRoot / summary ...
+  writeFileSync(join(artifactDir, "handoff.json"), JSON.stringify({ schemaVersion: "1.0", slug: "demo-run", status: "DONE" }), "utf8");
+  const audit = auditRunCompletion(artifactDir);
+  assert.equal(audit.complete, false);
+  assert.equal(audit.recommendedRunStatus, "PARTIAL");
+  assert.ok(audit.invalidHandoff.length > 0);
+  assert.throws(
+    () => updateRunStatus(artifactDir, "DONE"),
+    (error) => error instanceof OrchestrationStateError && error.code === "RUN_COMPLETION_GATES_FAILED" && error.details.invalidHandoff.length > 0,
+  );
+
+  writeFileSync(join(artifactDir, "handoff.json"), "{ not json", "utf8");
+  assert.equal(auditRunCompletion(artifactDir).invalidHandoff[0].code, "HANDOFF_NOT_JSON");
+
+  writeFileSync(join(artifactDir, "handoff.json"), VALID_HANDOFF, "utf8");
+  assert.equal(auditRunCompletion(artifactDir).complete, true);
+  assert.equal(updateRunStatus(artifactDir, "DONE").state.status, "DONE");
 });
 
 test("sync adds newly classified tasks without deleting durable history", () => {

@@ -75,6 +75,8 @@ Os artefatos de coordenação e relatórios finais ficam em `.orchestrator/runs/
 - **Sandbox Codex:** rede externa bloqueada para pacotes/restore, pacote ausente no cache local ou escrita fora do working directory permitido viram `BLOCKED` com evidência.
 - **Limite AGY no Windows:** prompts AGY acima de 28.000 chars são divididos em subtasks por entregáveis antes da delegação para evitar `ENAMETOOLONG`.
 
+> **Guard rails (4.21.0):** o estado da run (`state.json`, `events.jsonl`) so e escrito por `orchestration-state.mjs` — um hook `PreToolUse` bloqueia a edição manual; `run --status DONE` recusa um `handoff.json` que reprova em `validateHandoff()`; a run é conduzida na sessão principal (nunca delegada a fork/segundo plano) e o recap final precisa declarar o que foi pulado, dispensado ou degradado.
+
 ## Instalação
 
 Local:

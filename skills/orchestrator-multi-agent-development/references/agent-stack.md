@@ -118,6 +118,8 @@ Use para o review front-end pos-implementacao (Fase 9), em modo read-only. O AGY
 
 ## Politica de quota
 
+**Fallback de cota opt-in (`quotaFallbackChain`).** Quando `projectConfig.quotaFallbackChain === "enabled"` (5a pergunta da Project_Config, default `disabled`) e um Executor reporta `QUOTA_EXHAUSTED`/`QUOTA_EXAUSTED`, calcule a cadeia de fallback com `resolveFallbackChain` (`scripts/lib/quota-fallback.mjs`): ordem fixa `claude-code, codex, agy`, excluindo o Executor original e qualquer elo ja sinalizado como tambem esgotado nesta Run; tente o primeiro elo restante. Fallback para `claude-code` segue a "Regra central do Executor `claude-code`" do `SKILL.md` (implementacao via `Agent`, review read-only); fallback para `codex`/`agy` segue o mesmo caminho ja existente de troca de Executor abaixo. Cada fallback bem-sucedido grava uma entrada no contrato de repasse (`recordQuotaHandoff`, `state.json.quotaHandoffs[]`) e e reportado em `run/monitoring.md`/`report/workflow-log.md`. Com `quotaFallbackChain` `disabled` (ou ausente/legado), o comportamento **nao muda**: seguem as regras abaixo, linha a linha.
+
 - `QUOTA_EXHAUSTED` em implementacao Codex (Back-End):
   - O fallback de implementacao de back-end delega exclusivamente para o AGY (`cc-antigravity-plugin:antigravity-coder`) com modelos Gemini nativos:
     - `gemini-3.8-flash-medium` para tarefas pontuais/CRUDs, migrations simples, seeds e ajustes isolados;

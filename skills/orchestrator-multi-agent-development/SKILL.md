@@ -53,6 +53,16 @@ Ao concluir, o orquestrador grava um `report/handoff.json` em `.orchestrator/run
 27. **Learning produz candidatos, nunca regras globais automaticas.** A Fase 12 gera `learning/learning-report.md` a partir de evidencia duravel, sem editar `SKILL.md`. Uma lesson so vira Learned Recipe apos validacao independente; triggers sao deterministas, outcomes sao medidos e o Curator controla `ACTIVE`, `STALE`, `ARCHIVED`, pinning, contradicoes, backup e rollback.
 28. **O diretorio da run tem layout fixo por estagio do workflow.** Toda run nova nasce com `state.layoutVersion: 2` e grava os artefatos agrupados: `plan/` (classificacao e waves), `contracts/`, `run/` (monitoring, probes, `executor-results/`, `prompts/`), `review/` (reviews, E2E, `screenshots/`), `report/` (relatorios e `handoff.json`), `evidence/` e `learning/`. `state.json` e `events.jsonl` ficam sempre na **raiz** da run, porque e por eles que `resume` e a numeracao de `runId` descobrem a run — nunca mova esses dois nem aninhe o diretorio da run dentro de `.orchestrator/runs/`. Runs criadas antes desta versao continuam no layout plano (`layoutVersion` ausente) e seguem sendo lidas sem migracao; nao converta uma run existente. Ver `references/persistent-state.md`.
 
+## Execucao no fio principal e estado so via CLI
+
+- **Voce conduz a run inteira nesta sessao, fase a fase.** Nunca entregue a conducao das etapas restantes a um fork, a um subagente em segundo plano, a `ScheduleWakeup` ou a `/loop` — nem quando a run for longa ou a janela de contexto estiver pesada. Subagentes so entram como os executores Codex/AGY por task que a Stack de agentes e a delegacao por wave especificam, de forma sincrona; eles nunca conversam com o usuario, nunca avancam fase nem fecham gate. Se o contexto ficar pesado, deixe o estado consistente (`orchestration-state.mjs`) e peca ao usuario para retomar com `resume`.
+  Motivo (run real do Pensador, OficinaAI, 2026-09-18): um fork recebeu "execute as etapas restantes", respondeu que ja estava rodando em segundo plano, nao usou nenhuma ferramenta util e ficou 74 minutos bloqueado num `AskUserQuestion` que so o usuario poderia responder.
+- **O estado duravel so muda pelo CLI.** `state.json`, `events.jsonl` e `.state.lock` (em `.orchestration/...`) sao escritos exclusivamente por `orchestration-state.mjs` (`init`, `phase`, `task`, `gate`, `run --status ...`). Nunca os edite com `Edit`/`Write`/`sed`/redirecionamento: um hook `PreToolUse` (`hooks/hooks.json` → `scripts/guard-state.mjs`) bloqueia a escrita manual, e o `verify` do CLI detecta divergencia entre snapshot e log de eventos.
+- **O `handoff.json` nao e escrito de memoria.** Siga o envelope de `references/handoff-contract.md` e valide antes de reportar: `node "${CLAUDE_SKILL_DIR}/scripts/validate-handoff.mjs" --file <artifactDir>/report/handoff.json`. `run --status DONE` recusa (`HANDOFF_INVALID`) um handoff que reprova na validacao — inclusive o escrito a mao sem `handoffVersion`, `stage`, `producer`, `artifactRoot`, `summary`.
+- **O recap final e honesto sobre a cobertura.** Liste explicitamente toda fase, gate ou verificacao dispensada, fechada como `N/A`, degradada ou feita com fallback, e nunca declare "APROVADO" ou "concluido" quando houver alguma. Cobertura parcial fecha como `PARTIAL` com o `summary` nomeando a lacuna — nunca como `DONE`.
+
+---
+
 ## Fase 0 - Preflight, configuracao do projeto e instalacao assistida
 
 A Fase 0 tem quatro etapas, nesta ordem: preflight, resolucao da Project_Config (0.5), instalacao assistida (0.6) e novo preflight. A coleta da configuracao vem **antes** de qualquer oferta de instalacao, porque o conjunto de CLIs obrigatorias (o Required_CLI_Set) depende dos papeis escolhidos. Numa run nova sem `.orchestrator/project-config.md` isso produz ate tres preflights. Quando o skill e carregado a partir de `/orchestrator` ou `/orquestrador`, essas quatro etapas ja foram conduzidas pelo comando (ver `commands/orchestrator.md`, Passo 1) e nao devem ser repetidas aqui.
@@ -155,6 +165,15 @@ Nao tente contornar o sandbox com retries longos, troca arbitraria de ferramenta
 
 ## Politica de quota
 
+**Fallback de cota opt-in (`quotaFallbackChain`).** Quando `projectConfig.quotaFallbackChain === "enabled"` (5a pergunta da Project_Config, default `disabled`) e um Executor reporta `QUOTA_EXHAUSTED`/`QUOTA_EXAUSTED` numa task, calcule a cadeia de fallback com `resolveFallbackChain` (`scripts/lib/quota-fallback.mjs`): ordem fixa `claude-code, codex, agy` **excluindo** o Executor original e qualquer elo ja sinalizado como tambem esgotado nesta Run; tente o primeiro elo restante.
+
+- Fallback para `claude-code`: delega a task a um subagente do proprio Claude Code, seguindo exatamente a "Regra central do Executor `claude-code`" descrita acima — implementacao via `Agent`, nunca edicao direta no contexto principal; review em modo read-only.
+- Fallback para `codex`/`agy`: segue o mesmo caminho ja existente de troca de Executor (modelos Gemini nativos quando o alvo e AGY, como ja feito na regra de Codex->AGY abaixo).
+- Cada fallback bem-sucedido grava uma entrada no contrato de repasse via `node "${CLAUDE_SKILL_DIR}/scripts/quota-fallback.mjs" record --dir <run> --task <id> --from <executor> --to <executor> --reason-code QUOTA_EXHAUSTED --chain-position <n>` (`state.json.quotaHandoffs[]`) e e reportado em `run/monitoring.md`/`report/workflow-log.md`, igual as demais entradas de politica de cota.
+- Isso e uma suspensao explicita e opt-in da regra "NUNCA delegar para Claude, preservando a cota da sessao principal": so vale quando o toggle esta ligado. O ciclo de heartbeat/sweep monitora `quotaHandoffs` com `quotaRecoveryCheck: "PENDING"` para telemetria/informativo — nunca reabre nem reexecuta uma task ja `DONE` com o Executor de fallback.
+
+Quando `quotaFallbackChain` esta `disabled` (ou ausente/legado, Run antiga sem o campo), o comportamento **nao muda**: seguem as regras abaixo, linha a linha.
+
 - `QUOTA_EXAUSTED` no Antigravity/AGY:
   - registre o estado parcial;
   - faca fallback para Codex apenas quando for seguro;
@@ -247,6 +266,8 @@ node "${CLAUDE_SKILL_DIR}/scripts/orchestration-worktree.mjs" plan --dir ".orche
 ```
 
 Crie worktree apenas para tasks `ISOLATED`; `SERIAL`/`UNSCOPED` ficam fora do fan-out concorrente. Persista base/head/integration status e recupere worktrees apos crash. Antes de atribuir modelo AGY sem override, consulte `orchestration-router.mjs route`; registre a decisao e copie `decision.evidence` para `agyModelEvidence`. O validator reprova `agyModelSource: adaptive` sem evidencia.
+
+Quando `checks.runtime.git` reprova (Git ausente) ou o diretorio nao e um repositorio Git, `planTaskWorktrees` ja marca todas as tasks como `GIT_UNAVAILABLE`/nao elegiveis automaticamente: nenhuma pergunta ao usuario, nenhum erro — a wave inteira roda serializada no working directory principal. Com Git disponivel, a elegibilidade de worktree e puramente deterministica por escopo de arquivos; nunca pergunte ao usuario se deve isolar uma task em worktree.
 
 ## Telemetria, Learning Recipes e Curator
 

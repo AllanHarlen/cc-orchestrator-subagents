@@ -91,6 +91,28 @@ export function planTaskWorktrees(projectRoot, artifactDir, options = {}) {
   if (unknown.length) {
     throw new WorktreeError("TASK_NOT_FOUND", `Unknown task(s): ${unknown.join(", ")}`);
   }
+  const git = inspectGit(root);
+  if (!git.available) {
+    // Git ausente ou diretorio nao e um repositorio Git: degrada silenciosamente
+    // para execucao serializada. Nenhum calculo de overlap de escopo faz
+    // sentido sem Git, entao nem tenta.
+    const tasks = requested.map((id) => ({
+      taskId: id,
+      wave: state.tasks[id].wave,
+      scope: [],
+      eligible: false,
+      reason: "GIT_UNAVAILABLE",
+    }));
+    return {
+      schemaVersion: 1,
+      runId: state.runId,
+      wave: options.wave ?? state.currentWave,
+      tasks,
+      shared: [],
+      parallelEligible: [],
+      serialize: tasks.map((task) => task.taskId),
+    };
+  }
   const scopes = Object.fromEntries(requested.map((id) => [id, taskScope(root, state.tasks[id])]));
   const shared = [];
   for (let leftIndex = 0; leftIndex < requested.length; leftIndex += 1) {

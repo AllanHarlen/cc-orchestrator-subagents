@@ -17,7 +17,15 @@ import { projectKnowledgePaths } from "./project-knowledge.mjs";
 import { stableJson } from "./sqlite-store.mjs";
 
 export const TELEMETRY_SCHEMA_VERSION = 1;
-const TELEMETRY_EVENT_TYPES = new Set(["task_outcome", "task_attempt_outcome", "routing_decision"]);
+const TELEMETRY_EVENT_TYPES = new Set([
+  "task_outcome",
+  "task_attempt_outcome",
+  "routing_decision",
+  // Fallback de cota opt-in (`quotaFallbackChain`): registra a troca de
+  // Executor por QUOTA_EXHAUSTED/QUOTA_EXAUSTED (scripts/lib/quota-fallback.mjs).
+  // Metadata-only, como todo evento de telemetria: nunca prompt/conteudo/credencial.
+  "quota_handoff",
+]);
 
 const ALLOWED_FIELDS = new Set([
   "schemaVersion",
@@ -57,6 +65,11 @@ const ALLOWED_FIELDS = new Set([
   "apiCalls",
   "toolCalls",
   "metadata",
+  // quota_handoff (contrato de repasse de cota, opt-in via quotaFallbackChain).
+  "fromExecutor",
+  "toExecutor",
+  "chainPosition",
+  "quotaRecoveryCheck",
 ]);
 
 const FORBIDDEN_FIELD_PATTERN = /(?:prompt|content|sourceCode|diff|secret|token|password|credential|rawOutput)/i;
@@ -70,6 +83,11 @@ const ALLOWED_METADATA_FIELDS = new Set([
   "fidelityFloor",
   "historicalSamples",
   "executorSource",
+  // quota_handoff.
+  "fromExecutor",
+  "toExecutor",
+  "chainPosition",
+  "quotaRecoveryCheck",
 ]);
 const ALLOWED_VALIDATION_FIELDS = new Set(["total", "passed", "failed", "skipped", "status"]);
 const OPTIONAL_STRING_FIELDS = new Set([
@@ -88,6 +106,9 @@ const OPTIONAL_STRING_FIELDS = new Set([
   "sessionId",
   "conversationId",
   "usageMissingExecutor",
+  "fromExecutor",
+  "toExecutor",
+  "quotaRecoveryCheck",
 ]);
 const BOOLEAN_METADATA_FIELDS = new Set(["finalAttempt", "sourcePresent", "firstPass"]);
 const STRING_METADATA_FIELDS = new Set([
@@ -96,7 +117,11 @@ const STRING_METADATA_FIELDS = new Set([
   "heuristicBaseline",
   "fidelityFloor",
   "executorSource",
+  "fromExecutor",
+  "toExecutor",
+  "quotaRecoveryCheck",
 ]);
+const INTEGER_METADATA_FIELDS = new Set(["historicalSamples", "chainPosition"]);
 
 export class TelemetryError extends Error {
   constructor(code, message, details = undefined) {
@@ -179,6 +204,7 @@ function sanitizeEvent(input) {
     "evidenceCount",
     "apiCalls",
     "toolCalls",
+    "chainPosition",
   ]) {
     if (event[key] != null && (!Number.isInteger(event[key]) || event[key] < 0)) {
       throw new TelemetryError(
@@ -232,12 +258,12 @@ function sanitizeEvent(input) {
         );
       }
       if (
-        key === "historicalSamples" &&
+        INTEGER_METADATA_FIELDS.has(key) &&
         (!Number.isInteger(value) || value < 0)
       ) {
         throw new TelemetryError(
           "INVALID_TELEMETRY_METADATA",
-          "Telemetry metadata.historicalSamples must be a non-negative integer",
+          `Telemetry metadata.${key} must be a non-negative integer`,
         );
       }
       if (typeof value === "string" && value.length > 512) {

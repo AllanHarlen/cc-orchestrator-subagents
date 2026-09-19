@@ -174,7 +174,13 @@ test("Property 13: snapshot na inicializacao, drift na retomada, escopo pending 
         writeProjectConfig(root, { ...configB, updatedAt: laterNow });
         const resumed = resumeRunAtDirectory(artifactDir, { projectRoot: root, now });
 
-        const expectedDiffRoles = ["backendExecutor", "frontendExecutor", "frontendReviewer", "backendReviewer"]
+        const expectedDiffRoles = [
+          "backendExecutor",
+          "frontendExecutor",
+          "frontendReviewer",
+          "backendReviewer",
+          "quotaFallbackChain",
+        ]
           .filter((role) => configA[role] !== configB[role])
           .sort();
         const actualDiffRoles = resumed.projectConfigDrift.differences.map((entry) => entry.role).sort();

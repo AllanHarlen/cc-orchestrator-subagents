@@ -1,5 +1,85 @@
 # Changelog
 
+## [4.21.0] - 2026-09-19 - Guard do estado da run, handoff validado no DONE e sync com cc-pensador 2.28/2.29
+
+Endurece o plugin contra as falhas observadas numa run real do Pensador (OficinaAI, sessao
+`oficinaai-dd`, 2026-09-18): etapas delegadas a um fork em segundo plano (74 min sem progresso),
+checkpoint movido a mao de `INIT` para `DONE` pulando seis estagios, e um `handoff.json` escrito a
+mao que reprovava em `validate-handoff.mjs` apresentado como "PRD completo". O estado deste plugin
+ja e event-sourced e gated; o que faltava era impedir o contorno manual e validar o handoff no fechamento.
+
+- **Novo hook `PreToolUse`** (`hooks/hooks.json` → `scripts/guard-state.mjs`, decisao em
+  `lib/state-guard.mjs`): bloqueia `Edit`/`Write`/`MultiEdit` e escritas via Bash/PowerShell em
+  `state.json`, `events.jsonl` e `.state.lock` dentro de `.orchestration/` e `.orchestrator/`. Leituras e o proprio `orchestration-state.mjs`
+  passam; falha aberta. O `verify`/replay do CLI continua sendo a rede de seguranca.
+- **`auditRunCompletion()` valida o handoff**: `report/handoff.json` que reprova em `validateHandoff()` (ou nao
+  e JSON) entra em `invalidHandoff` e impede `complete`/`DONE` (`RUN_COMPLETION_GATES_FAILED`); a run fecha
+  PARTIAL. O fixture de teste que usava `{}` como handoff — exatamente o defeito — passa a usar um handoff valido.
+- **SKILL**: nova secao "Execucao no fio principal e estado so via CLI" — proibe delegar a conducao a
+  fork/segundo plano/`ScheduleWakeup`/`/loop`, proibe editar o estado a mao, exige validar o handoff e
+  obriga o recap final a declarar o que foi pulado, dispensado ou degradado (nunca "concluido" com lacunas).
+- Sync com o contrato do `cc-pensador` 2.28: role `ui-prototype` removido de `HANDOFF_ROLES_BY_STAGE.pensador`
+  e do `handoff-contract.md` (byte-identico nos 4 plugins).
+- `pensador-ingest`: o teste de coleta visual deixa de exigir `ui-prototype` (o Pensador 2.28+ nao gera mais prototipos); `workflow.md` ajustado.
+- Versao 4.21.0 (a 4.20.0 esta reservada pela PR #7, fallback de cota); a base desta branch inclui a PR #7.
+- Testes: `tests/state-guard.test.mjs` e o caso "run cannot be DONE with a hand-written handoff.json" em `tests/orchestration-state.test.mjs`.
+
+## [4.20.0] — 2026-09-17 — Fallback de cota opt-in (claude-code -> codex -> agy) e worktree sem Git instalado
+
+Dois pedidos independentes do usuario sobre o mesmo plugin: (1) hoje `QUOTA_EXHAUSTED`/`QUOTA_EXAUSTED`
+num Executor de implementacao vira bloqueio ou pede decisao do usuario, e Claude nunca e usado como
+fallback ("preservar a cota da sessao principal"); alguns usuarios querem suspender essa regra de
+forma explicita e opt-in. (2) quando o diretorio do projeto nao tem Git instalado ou nao e um
+repositorio Git, `planTaskWorktrees` calculava overlap de escopo sobre um `inspectGit` que ja
+reportava `available: false`, deixando o comportamento efetivo dependente de como o consumidor lia
+esse plano em vez de ser explicito e testado.
+
+- **5a pergunta da Project_Config: `quotaFallbackChain` (`disabled`/`enabled`, default `disabled`).**
+  Novo campo opt-in, documentado em `references/project-config.md` ao lado das quatro perguntas de
+  papel — mas fora de `ROLES`: nao decide um Executor, e um toggle. Retrocompativel por design: um
+  `.orchestrator/project-config.md` gravado antes desta versao nao tem a linha e o parser resolve
+  `disabled` sem lancar `PROJECT_CONFIG_FIELD_MISSING` (`scripts/lib/project-config.mjs`). Congelado
+  no snapshot `state.json.projectConfig` junto dos quatro papeis e coberto pelo mesmo fluxo de
+  `projectConfigDrift`/adocao de escopo `pending` (`orchestration-state.mjs`, novo
+  `diffQuotaFallbackChain`).
+- **`scripts/lib/quota-fallback.mjs` (novo) e `state.json.quotaHandoffs[]` (contrato de repasse).**
+  `resolveFallbackChain(originalExecutor, { exhausted })` calcula, de forma pura, os elos ainda
+  tentaveis da cadeia fixa `claude-code, codex, agy` excluindo o Executor original e qualquer elo ja
+  esgotado nesta Run. `recordQuotaHandoff`/`listQuotaHandoffs`/`markQuotaRecoveryChecked` gravam e
+  consultam uma nova transicao de estado (`appendQuotaHandoff`/`markQuotaHandoffRecoveryChecked` em
+  `orchestration-state.mjs`, no mesmo padrao de `updateTaskWorkspace`): cada troca de Executor por
+  cota vira uma entrada `{ taskId, wave, fromExecutor, toExecutor, reasonCode, chainPosition,
+  timestamp, quotaRecoveryCheck }`. Nova CLI fina `scripts/quota-fallback.mjs` (`resolve`, `record`,
+  `list`, `mark-recovery-checked`) para o workflow chamar durante a Fase de dispatch e o ciclo de
+  heartbeat/sweep. **Kiro fica de fora desta rodada** (nao ha hoje integracao de Kiro como Executor no
+  Orquestrador; adiciona-la e trabalho novo, nao uma extensao desta cadeia).
+- **`SKILL.md` (Politica de quota) e `references/agent-stack.md` atualizados com a condicao de
+  ativacao do fallback**, preservando linha a linha o comportamento atual quando `quotaFallbackChain`
+  esta `disabled` (ou ausente/legado). Fallback para `claude-code` segue a "Regra central do Executor
+  `claude-code`" ja existente (implementacao via `Agent`, review read-only); fallback para
+  `codex`/`agy` segue o caminho de troca de Executor ja documentado. Ciclo de heartbeat/sweep sonda
+  `quotaHandoffs` com `quotaRecoveryCheck: "PENDING"` (reaproveitando `adaptExecutorProbe`) e
+  atualiza para `RESTORED` — puramente informativo, nunca reabre ou reexecuta uma task ja `DONE`.
+- **Telemetria: novo tipo de evento `quota_handoff`.** `TELEMETRY_EVENT_TYPES`,
+  `ALLOWED_FIELDS`/`ALLOWED_METADATA_FIELDS` de `scripts/lib/telemetry.mjs` ganham `fromExecutor`,
+  `toExecutor`, `chainPosition` e `quotaRecoveryCheck`, respeitando o contrato de privacidade
+  existente (metadata-only, `FORBIDDEN_FIELD_PATTERN` continua banindo prompt/conteudo/credencial).
+- **Worktree sem Git instalado degrada silenciosamente para execucao serializada.**
+  `scripts/preflight.mjs` ganha `checks.runtime.git` (via o `checkCli()` generico ja existente) —
+  nunca obrigatorio, sempre um aviso (`NOT_INSTALLED`) quando reprova, no mesmo padrao do loop de
+  avisos de MCP. `worktree-manager.mjs::planTaskWorktrees` agora checa `inspectGit(root)` uma unica
+  vez no inicio: quando indisponivel, marca toda task da wave `eligible: false, reason:
+  "GIT_UNAVAILABLE"` sem calcular overlap de escopo, sem lancar erro e sem perguntar nada ao usuario.
+  Com Git disponivel o comportamento nao muda (elegibilidade deterministica por escopo de arquivos) —
+  agora documentado explicitamente em `SKILL.md` e `references/worktrees-routing.md` para nao
+  regredir.
+
+11 testes novos/atualizados (`quota-fallback.test.mjs`, `routing-gates.test.mjs`,
+`worktree-manager.test.mjs`, `run-config.property.test.mjs`, `project-config-cli.test.mjs`,
+`tests/helpers/project-config-arbitraries.mjs`); suite completa: 460 passed, 1 pre-existente (fora
+do escopo desta mudanca — sincronizacao de `handoff-contract.md`/`ui-prototype` pendente de uma
+mudanca irmA no cc-pensador).
+
 ## [4.19.0] — 2026-09-17 — Gate de cobertura de contrato (ui-data-map), prova de persistencia na E2E, imagery por superficie
 
 Segunda rodada de correcao sobre a mesma run real (OficinaAI, 2026-09-16, apos a 4.18.0 ja em

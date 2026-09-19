@@ -2,10 +2,13 @@ import fc from "fast-check";
 
 import {
   DEFAULT_PROJECT_CONFIG,
+  DEFAULT_QUOTA_FALLBACK_CHAIN,
   EXECUTORS,
   PROJECT_CONFIG_DEFAULT_APPLIED_MARK,
   PROJECT_CONFIG_FIELDS,
   PROJECT_CONFIG_SCHEMA_VERSION,
+  QUOTA_FALLBACK_FIELD,
+  QUOTA_FALLBACK_VALUES,
   ROLES,
   renderProjectConfig,
 } from "../../skills/orchestrator-multi-agent-development/scripts/lib/project-config.mjs";
@@ -19,11 +22,12 @@ import {
  * daqui para nao reimplementar o mesmo espaco de entrada.
  */
 
-/** Campos comparados no round-trip: os seis campos canonicos da Project_Config. */
+/** Campos comparados no round-trip: os sete campos canonicos da Project_Config. */
 export const PROJECT_CONFIG_ROUND_TRIP_FIELDS = Object.freeze([
   "schemaVersion",
   "updatedAt",
   ...ROLES,
+  QUOTA_FALLBACK_FIELD,
 ]);
 
 /** Um executor do conjunto permitido. */
@@ -34,6 +38,11 @@ export function arbExecutor() {
 /** Os quatro papeis, cada um sobre os tres executores permitidos. */
 export function arbRoles() {
   return fc.record(Object.fromEntries(ROLES.map((role) => [role, arbExecutor()])));
+}
+
+/** Um valor permitido do campo opt-in `quotaFallbackChain` (`disabled`/`enabled`). */
+export function arbQuotaFallbackChain() {
+  return fc.constantFrom(...QUOTA_FALLBACK_VALUES);
 }
 
 /**
@@ -81,6 +90,7 @@ export function arbProjectConfig(options = {}) {
       schemaVersion: fc.constant(PROJECT_CONFIG_SCHEMA_VERSION),
       updatedAt: arbInstant(),
       ...Object.fromEntries(ROLES.map((role) => [role, fc.constant(roles[role])])),
+      [QUOTA_FALLBACK_FIELD]: arbQuotaFallbackChain(),
       ...(defaultsApplied ? { defaultsApplied: arbRoleSubset() } : {}),
     }),
   );
@@ -235,11 +245,12 @@ function renderNoisyProjectConfigFile(config, noise) {
     updatedAt: renderInstant(config.updatedAt, noise.timestamp),
   };
   for (const role of ROLES) values[role] = config[role];
+  values[QUOTA_FALLBACK_FIELD] = config[QUOTA_FALLBACK_FIELD];
 
   noise.fieldOrder.forEach((field, index) => {
     const lineNoise = noise.fieldLines[index % noise.fieldLines.length];
-    // Case do valor so varia em papel: `updatedAt` exige `T` e `Z` maiusculos.
-    const value = ROLES.includes(field)
+    // Case do valor so varia em papel/campo opt-in: `updatedAt` exige `T` e `Z` maiusculos.
+    const value = ROLES.includes(field) || field === QUOTA_FALLBACK_FIELD
       ? applyCase(values[field], lineNoise.valueCase)
       : values[field];
     pushBlank(lineNoise.blankBefore);
@@ -270,6 +281,7 @@ function expectedProjectConfig(config) {
     updatedAt: config.updatedAt,
   };
   for (const role of ROLES) expected[role] = config[role];
+  expected[QUOTA_FALLBACK_FIELD] = config[QUOTA_FALLBACK_FIELD];
   expected.defaultsApplied = config.defaultsApplied ?? [];
   return expected;
 }
@@ -467,6 +479,15 @@ const UNPARSEABLE_CONTENTS = Object.freeze([
 /** Valores que o parser reduz a vazio, ou seja, a campo obrigatorio ausente. */
 const EMPTY_VALUE_TOKENS = Object.freeze(["", " ", "  ", "\t", '""', "``", "''"]);
 
+/**
+ * Campos obrigatorios do Project_Config_File: todo `PROJECT_CONFIG_FIELDS`
+ * exceto `quotaFallbackChain`, que e retrocompativel (ausencia resolve para o
+ * default em vez de `PROJECT_CONFIG_FIELD_MISSING`).
+ */
+const REQUIRED_PROJECT_CONFIG_FIELDS = Object.freeze(
+  PROJECT_CONFIG_FIELDS.filter((field) => field !== QUOTA_FALLBACK_FIELD),
+);
+
 /** Localiza a linha canonica de um campo no conteudo gravado. */
 function fieldLineIndex(lines, field) {
   const index = lines.findIndex((line) => line.startsWith(`- **${field}**:`));
@@ -502,7 +523,7 @@ function defect(kind, code, extra = {}) {
 /** Linha de campo removida do arquivo. */
 function arbMissingFieldLine() {
   return fc
-    .tuple(arbCanonicalContent(), fc.constantFrom(...PROJECT_CONFIG_FIELDS))
+    .tuple(arbCanonicalContent(), fc.constantFrom(...REQUIRED_PROJECT_CONFIG_FIELDS))
     .map(([base, field]) => ({
       content: removeFieldLine(base.content, field),
       defect: defect("field-line-removed", "PROJECT_CONFIG_FIELD_MISSING", { field }),
@@ -514,7 +535,7 @@ function arbEmptyFieldValue() {
   return fc
     .tuple(
       arbCanonicalContent(),
-      fc.constantFrom(...PROJECT_CONFIG_FIELDS),
+      fc.constantFrom(...REQUIRED_PROJECT_CONFIG_FIELDS),
       fc.constantFrom(...EMPTY_VALUE_TOKENS),
     )
     .map(([base, field, token]) => ({
@@ -680,10 +701,14 @@ export function arbPartialProjectConfigAnswers() {
         minLength: ROLES.length,
         maxLength: ROLES.length,
       }),
+      // Sempre respondido nesta propriedade: o escopo de "papel sem resposta"
+      // aqui e so os quatro papeis de executor (Req 2.8). `quotaFallbackChain`
+      // tem propriedade dedicada de default-aplicado.
+      quotaFallbackChain: arbQuotaFallbackChain(),
       updatedAt: arbInstant(),
     })
-    .map(({ unanswered, answered, answerNoise, shapes, updatedAt }) => {
-      const answers = {};
+    .map(({ unanswered, answered, answerNoise, shapes, quotaFallbackChain, updatedAt }) => {
+      const answers = { [QUOTA_FALLBACK_FIELD]: quotaFallbackChain };
       const expectedRoles = {};
       ROLES.forEach((role, index) => {
         if (unanswered.includes(role)) {

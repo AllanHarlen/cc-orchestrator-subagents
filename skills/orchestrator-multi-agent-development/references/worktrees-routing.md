@@ -22,6 +22,12 @@ node "${CLAUDE_SKILL_DIR}/scripts/orchestration-worktree.mjs" cleanup --dir <run
 
 O estado preserva path, branch, base/head, integration status, conflicts e cleanup. Integração exige worktree/root produtivo limpo e branch correta. Conflito fica materializado como `CONFLICT`; não é abortado nem resolvido silenciosamente. `recover` reconcilia worktrees existentes após crash. Cleanup normal só ocorre depois de merge; `--force` é explícito.
 
+## Git ausente
+
+Quando Git não está instalado, ou o diretório do projeto não é um repositório Git, `planTaskWorktrees` detecta isso via `inspectGit` uma única vez e marca **todas** as tasks da wave como `eligible: false` / `reason: "GIT_UNAVAILABLE"`, sem calcular overlap de escopo. `parallelEligible` fica vazio e `serialize` lista a wave inteira. Isso degrada silenciosamente para execução serializada no diretório de trabalho principal — nenhum erro é lançado e nenhuma `AskUserQuestion` é feita. `checks.runtime.git` do preflight reporta essa ausência como aviso (`NOT_INSTALLED`), nunca como bloqueio: Git nunca é obrigatório.
+
+Com Git disponível, a elegibilidade de worktree é puramente determinística por escopo de arquivos (`SCOPE_UNKNOWN`/`SHARED_FILES`/`ISOLATED_SCOPE`); nunca pergunte ao usuário se deve isolar uma task em worktree.
+
 ## Router adaptativo
 
 O router mantém as regras estáticas como baseline e usa tentativas históricas somente quando há amostra comparável por `taskType`/`complexity`:

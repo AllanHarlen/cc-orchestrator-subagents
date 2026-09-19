@@ -7,10 +7,10 @@ import {
   mkdirSync,
   openSync,
   readFileSync,
-  renameSync,
   writeFileSync,
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { renameWithRetry } from "./fs-retry.mjs";
 
 import { loadRun } from "./orchestration-state.mjs";
 import { projectKnowledgePaths } from "./project-knowledge.mjs";
@@ -544,7 +544,7 @@ function atomicTelemetryWrite(path, events) {
   } finally {
     closeSync(fd);
   }
-  renameSync(temporary, path);
+  renameWithRetry(temporary, path);
 }
 
 export function compactTelemetry(projectRoot, options = {}) {

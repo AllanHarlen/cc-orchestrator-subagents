@@ -1,5 +1,37 @@
 # Changelog
 
+## [4.24.1] — 2026-09-19 — Rename atomico resistente a bloqueio transitorio (Windows)
+
+- **Causa do teste instavel `reconciliation never regresses a terminal task`:** nao era a logica de reconciliacao (estado terminal e preservado de forma deterministica) e sim um `EPERM` em `renameSync(tmp -> state.json)` dentro de `writeSnapshotAtomically`. No Windows, renomear sobre um arquivo que outro processo tem aberto por um instante (antivirus, indexador, leitor concorrente) falha de forma transitoria; sem retry, o `commitEvent` de qualquer `resumeRunAtDirectory` podia lancar. Reproduzido sob carga (8 processos paralelos): 1 falha em 40 execucoes, com o mesmo `EPERM` em outro teste do arquivo.
+- **Correcao:** novo `lib/fs-retry.mjs::renameWithRetry` (ate 12 tentativas, backoff de 10 a 100 ms, so para `EPERM`/`EBUSY`/`EACCES`; qualquer outro erro propaga na hora). Usado em `orchestration-state`, `executor-control`, `intelligence`, `learning-recipes`, `lifecycle-manager`, `project-config` e `telemetry`, que tinham o mesmo padrao `tmp -> path`.
+- **Testes:** `tests/fs-retry.test.mjs` cobre a recuperacao por injecao de falha (deterministico), o limite de tentativas, o nao-retry de erros nao transitorios e o backoff limitado.
+- **Prova:** 120 execucoes de `orchestration-state.test.mjs` (15 rodadas x 8 processos paralelos), todas verdes, incluindo o teste alvo em todas.
+
+## [4.24.0] — 2026-09-19 — Papel legado `ui-prototype` bloqueado
+
+- **Ingest:** `inspectVisualHandoff` deixa de ler o papel `ui-prototype` (removido do Pensador na 2.28.0 e do contrato de handoff na 2.32.0). Um handoff que o declare gera o finding critico `LEGACY_UI_PROTOTYPE_ROLE`, pedindo para regerar o handoff no Pensador >= 2.32, em vez de ser aceito em silencio. O campo `prototypes` some de `visualPackage`.
+- **Docs/prompts:** referencias a `prototypes/` em `SKILL.md`, `workflow.md`, `subagent-prompts.md` e nos READMEs passam a apontar para o `preview/` gerado do design system.
+
+## [4.23.0] — 2026-09-19 — Gates mecanicos de design (Fase 7 do plano)
+
+O design system deixa de ser conferido por autodeclaracao no Orquestrador.
+
+- **Wave gate real (O1):** `run-wave-gate.mjs` passa a chamar o linter de tokens sobre os arquivos front-end alterados (`--tokens-css`, `--changed-files` ou `git diff`). `lintCssForTokens` agora tambem acusa px de espacamento/raio fora de `var(...)` e `style={{}}` inline com espacamento/raio literal (cada violacao ganha `kind`: `hex` | `px` | `inline-style`), e o gate acusa `var(--x)` sem token definido. `checks.designTokens` deixa de ser `PASS` fixo: e `PASS`/`FAILED`, ou `SKIPPED` explicito (sem `--tokens-css` ou sem como listar os arquivos). Hex literal em componente reprova a onda. O pacote de design nunca e linta.
+- **Materializacao confere o pacote (O3):** `inspectVisualHandoff`/`materialize-visual-handoff.mjs` recalculam o `contractSha256` do `design-contract.json` (novo `lib/design-contract-hash.mjs`, mesma serializacao canonica do Pensador) e o comparam com o contrato, o `design-audit.json` e o `contractSha256` do handoff (`CONTRACT_HASH_MISMATCH` critico, `CONTRACT_HASH_MISSING`). O veredito do audit vem do `design-audit.json` em disco (`DESIGN_AUDIT_MISSING`/`DESIGN_AUDIT_INVALID`/`DESIGN_AUDIT_NOT_PASS`); o `validation.status` do handoff nao e mais lido. Os pacotes passam a expor `themes` e `designBriefPath`.
+- **Evidencia mecanica (O2):** em `validate-ui-evidence.mjs`, `undefinedTokens`/`hardcodedDesignValues`/`previewDivergence` em `false` so valem com `evidence.designEvidence.tokenLint` (saida `--json` do wave gate) e `previewDiff` (saida do probe/comparacao com `preview/`): `DESIGN_EVIDENCE_MISSING`/`_INVALID`/`_FAILED`. Flag `true` continua bloqueando.
+- **Prompts (O4):** `subagent-prompts.md` e `SKILL.md` fixam a ordem normativa `design-contract.json`/`tokens.css` > `components.html` > prosa, apontam para o `preview/` gerado (`index/colors/typography/spacing/components/app.html`, nos dois temas) em vez das paginas do catalogo, pedem o tema conforme `design-brief.json` (`themeDefault`/`themeExposure`) e o `DESIGN_CHANGE_REQUEST` para token novo.
+- **Testes:** `tests/wave-gate-design-tokens.test.mjs` (novo), casos de hash/audit em `orchestrator-bootstrap.test.mjs` e de evidencia em `ui-evidence.test.mjs`; o fixture do pacote `resolved` agora traz contrato assinado e audit ligado por hash.
+- **Migracao:** handoffs cujo `resolved/` nao tenha `design-audit.json` PASS e `design-contract.json` com `sha256` (Pensador < 2.31) passam a ficar `BLOCKED`; gere o pacote de novo no Pensador.
+
+## [4.22.0] — 2026-09-19 — Contrato de handoff do design system (Fase 6 do plano)
+
+Sync com `cc-pensador` 2.32.0 (Fase 6 do plano de design system): `handoff-contract.md` reescrito (secao 6) e byte-identico nos 4 plugins.
+
+- **Contrato:** `design-system-files` aponta para `design-systems/<id>/resolved/` (unico pacote normativo); `source/` guarda so a proveniencia do engine; nao existe mais `original/` nem verbatim de catalogo. Front matter do `DESIGN.md` e normativo, a prosa nao. `materializeInto` = `<uiPackageDir>/design-systems/<id>/`.
+- **Novos campos da entrada:** `contractSha256` (sha256 hex ou `null`), `themes` (inclui `light` e `dark`), `designBriefPath` (relativo ao `artifactRoot`), alem de `variant`, `authoritative`, `sourcePath`, `assetsManifest` e `validation.{status,audit}` no schema.
+- **Politica de token:** token novo so por nova versao do Pensador; a correcao que o exigir registra `DESIGN_CHANGE_REQUEST`.
+- **Validador:** `validateHandoff()` rejeita `contractSha256` malformado (`INVALID_CONTRACT_SHA256`), `themes` sem `light`/`dark` (`INVALID_DESIGN_THEMES`) e `designBriefPath` vazio (`INVALID_DESIGN_BRIEF_PATH`) em entradas `resolved`; fixture e casos de teste em cada um dos 4 plugins.
+
 ## [4.21.0] - 2026-09-19 - Guard do estado da run, handoff validado no DONE e sync com cc-pensador 2.28/2.29
 
 Endurece o plugin contra as falhas observadas numa run real do Pensador (OficinaAI, sessao

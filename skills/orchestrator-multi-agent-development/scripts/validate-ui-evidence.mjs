@@ -54,6 +54,64 @@ function isPersistenceProofSatisfied(value) {
   return value.createdViaUi === true && value.verifiedInFreshContext === true;
 }
 
+/**
+ * The three design gates (`undefinedTokens`, `hardcodedDesignValues`, `previewDivergence`) used to be
+ * booleans the orchestrator wrote about its own work. A `false` is now only accepted when backed by a
+ * MECHANICAL evidence file, referenced by `evidence.designEvidence` (paths relative to the evidence file):
+ *   - `tokenLint`: the `checks.designTokens` output of run-wave-gate.mjs (or a whole `--json` run of it)
+ *     with status PASS, enabled, and no violations/undefinedTokens — proves the first two gates;
+ *   - `previewDiff`: the aggregated output of the runtime design probe / preview comparison, with
+ *     `status: "PASS"` and no blocking findings — proves `previewDivergence`.
+ * A `true`/positive flag always blocks; an omitted flag with no design evidence is not an attestation
+ * (only when the run declares a design system: `evidence.designSystem` or any of the flags being set).
+ */
+const DESIGN_EVIDENCE_GATES = {
+  undefinedTokens: "tokenLint",
+  hardcodedDesignValues: "tokenLint",
+  previewDivergence: "previewDiff",
+};
+
+function readEvidenceFile(baseDir, relPath) {
+  if (typeof relPath !== "string" || relPath === "") return { status: "missing" };
+  const file = resolve(baseDir, relPath);
+  if (!existsSync(file)) return { status: "missing", file };
+  try { return { status: "ok", file, value: JSON.parse(readFileSync(file, "utf8")) }; }
+  catch { return { status: "invalid", file }; }
+}
+
+function tokenLintProblem(value) {
+  const check = value?.checks?.designTokens ?? value;
+  if (!check || typeof check !== "object") return "not a run-wave-gate designTokens output";
+  if (check.enabled !== true) return "design token lint was not enabled (no tokens.css)";
+  if (check.status !== "PASS") return `design token lint status is ${check.status ?? "missing"}`;
+  if ((check.violations ?? []).length > 0 || (check.undefinedTokens ?? []).length > 0) return "design token lint reports violations";
+  if (!Array.isArray(check.filesScanned)) return "design token lint did not record filesScanned";
+  return null;
+}
+
+function previewDiffProblem(value) {
+  if (!value || typeof value !== "object") return "not a probe/preview-diff output";
+  const blocking = (value.findings ?? []).filter((item) => item?.blocking === true || ["critical", "high"].includes(item?.severity));
+  if (value.status !== "PASS" || blocking.length > 0) return `probe status is ${value.status ?? "missing"}${blocking.length ? ` with ${blocking.length} blocking finding(s)` : ""}`;
+  return null;
+}
+
+function verifyDesignEvidence(evidence, baseDir, add) {
+  const gates = evidence.gates ?? {};
+  const attested = Object.keys(DESIGN_EVIDENCE_GATES).filter((flag) => gates[flag] === false || gates[flag] === 0);
+  if (!evidence.designSystem && attested.length === 0 && !evidence.designEvidence) return;
+  const needed = new Set(Object.keys(DESIGN_EVIDENCE_GATES).map((flag) => DESIGN_EVIDENCE_GATES[flag]));
+  for (const kind of needed) {
+    const ref = evidence.designEvidence?.[kind];
+    const read = readEvidenceFile(baseDir, ref);
+    const flags = Object.keys(DESIGN_EVIDENCE_GATES).filter((flag) => DESIGN_EVIDENCE_GATES[flag] === kind);
+    if (read.status === "missing") { add("DESIGN_EVIDENCE_MISSING", `designEvidence.${kind} must point to an existing mechanical evidence file (gates ${flags.join("/")} cannot be self-attested)`, `designEvidence.${kind}`); continue; }
+    if (read.status === "invalid") { add("DESIGN_EVIDENCE_INVALID", `designEvidence.${kind} is not valid JSON`, `designEvidence.${kind}`); continue; }
+    const problem = kind === "tokenLint" ? tokenLintProblem(read.value) : previewDiffProblem(read.value);
+    if (problem) add("DESIGN_EVIDENCE_FAILED", `designEvidence.${kind}: ${problem}`, `designEvidence.${kind}`);
+  }
+}
+
 export function validateUiEvidence(evidence, { baseDir = process.cwd(), uiDataMap = null } = {}) {
   const findings = [];
   const add = (code, message, path = null) => findings.push({ severity: "high", code, message, path });
@@ -77,6 +135,7 @@ export function validateUiEvidence(evidence, { baseDir = process.cwd(), uiDataMa
     const value = evidence.gates?.[flag];
     if (value === true || (typeof value === "number" && value > 0)) add("UI_GATE_FAILED", `${flag} must be false/zero`, `gates.${flag}`);
   }
+  verifyDesignEvidence(evidence, baseDir, add);
   for (const review of evidence.reviews ?? []) {
     if (["critical", "high"].includes(review.severity) && review.status !== "resolved") add("HIGH_FINDING_OPEN", review.message ?? "High/critical finding remains open", review.id);
   }

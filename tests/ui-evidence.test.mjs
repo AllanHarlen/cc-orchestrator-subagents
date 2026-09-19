@@ -111,3 +111,59 @@ test("ui-data-map cross-check: a detail-only screen does not require persistence
   assert.equal(result.status, "PASS");
 });
 
+
+function withDesignEvidence(files) {
+  const { root, evidence } = validEvidence();
+  for (const [name, body] of Object.entries(files)) writeFileSync(join(root, name), JSON.stringify(body));
+  evidence.designSystem = "agentic";
+  evidence.gates = { undefinedTokens: false, hardcodedDesignValues: false, previewDivergence: false };
+  evidence.designEvidence = { tokenLint: "token-lint.json", previewDiff: "preview-diff.json" };
+  return { root, evidence };
+}
+const goodLint = { enabled: true, status: "PASS", filesScanned: ["src/a.css"], violations: [], undefinedTokens: [] };
+
+test("design gates set to false without mechanical evidence are rejected (no self-attestation)", () => {
+  const { root, evidence } = validEvidence();
+  evidence.gates = { undefinedTokens: false, hardcodedDesignValues: false, previewDivergence: false };
+  const result = validateUiEvidence(evidence, { baseDir: root });
+  assert.equal(result.status, "BLOCKED");
+  assert.deepEqual(result.findings.map((item) => item.code), ["DESIGN_EVIDENCE_MISSING", "DESIGN_EVIDENCE_MISSING"]);
+});
+
+test("design gates pass with a passing token lint (run-wave-gate output) and a passing probe file", () => {
+  const { root, evidence } = withDesignEvidence({
+    "token-lint.json": { status: "PASS", checks: { designTokens: goodLint } },
+    "preview-diff.json": { status: "PASS", findings: [] },
+  });
+  assert.equal(validateUiEvidence(evidence, { baseDir: root }).status, "PASS");
+});
+
+test("a token lint with violations or a disabled lint does not prove the design gates", () => {
+  const dirty = withDesignEvidence({
+    "token-lint.json": { ...goodLint, status: "FAILED", violations: [{ kind: "hex" }] },
+    "preview-diff.json": { status: "PASS", findings: [] },
+  });
+  assert.ok(validateUiEvidence(dirty.evidence, { baseDir: dirty.root }).findings.some((item) => item.code === "DESIGN_EVIDENCE_FAILED" && item.path === "designEvidence.tokenLint"));
+  const disabled = withDesignEvidence({
+    "token-lint.json": { ...goodLint, enabled: false, status: "SKIPPED" },
+    "preview-diff.json": { status: "PASS", findings: [] },
+  });
+  assert.ok(validateUiEvidence(disabled.evidence, { baseDir: disabled.root }).findings.some((item) => item.code === "DESIGN_EVIDENCE_FAILED"));
+});
+
+test("a probe file with a blocking finding or invalid JSON blocks previewDivergence", () => {
+  const blocking = withDesignEvidence({
+    "token-lint.json": goodLint,
+    "preview-diff.json": { status: "PASS", findings: [{ severity: "high", code: "DESIGN_COLOR_OFF_PALETTE" }] },
+  });
+  assert.ok(validateUiEvidence(blocking.evidence, { baseDir: blocking.root }).findings.some((item) => item.path === "designEvidence.previewDiff"));
+  const invalid = withDesignEvidence({ "token-lint.json": goodLint });
+  writeFileSync(join(invalid.root, "preview-diff.json"), "{nope");
+  assert.ok(validateUiEvidence(invalid.evidence, { baseDir: invalid.root }).findings.some((item) => item.code === "DESIGN_EVIDENCE_INVALID"));
+});
+
+test("a true design flag still blocks even with good evidence files", () => {
+  const { root, evidence } = withDesignEvidence({ "token-lint.json": goodLint, "preview-diff.json": { status: "PASS" } });
+  evidence.gates.hardcodedDesignValues = true;
+  assert.ok(validateUiEvidence(evidence, { baseDir: root }).findings.some((item) => item.code === "UI_GATE_FAILED"));
+});

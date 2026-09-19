@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/AllanHarlen/cc-orchestrador-subagents/schemas/handoff.schema.json",
   "title": "Workflow handoff.json (Pensador -> Orchestrador -> Executor)",
-  "description": "Formal shape of handoff.json, handoffVersion 1, per references/handoff-contract.md. This file documents the contract for humans/tooling; the actual runtime validation is hand-rolled in scripts/lib/handoff-validator.mjs (validateHandoff), following the same pattern already used for orchestration-state.schema.json in cc-orchestrador-subagents \u2014 no schema-validation library dependency.",
+  "description": "Formal shape of handoff.json, handoffVersion 1, per references/handoff-contract.md. This file documents the contract for humans/tooling; the actual runtime validation is hand-rolled in scripts/lib/handoff-validator.mjs (validateHandoff), following the same pattern already used for orchestration-state.schema.json in cc-orchestrador-subagents — no schema-validation library dependency.",
   "type": "object",
   "required": [
     "handoffVersion",
@@ -121,7 +121,7 @@
         ],
         "properties": {
           "role": {
-            "description": "Valid values depend on `stage` \u2014 see the per-stage tables in references/handoff-contract.md section 5 (HANDOFF_ROLES_BY_STAGE in handoff-validator.mjs).",
+            "description": "Valid values depend on `stage` — see the per-stage tables in references/handoff-contract.md section 5 (HANDOFF_ROLES_BY_STAGE in handoff-validator.mjs).",
             "type": "string",
             "minLength": 1
           },
@@ -162,8 +162,56 @@
               },
               "validate": {
                 "type": "string"
+              },
+              "status": {
+                "type": "string"
+              },
+              "audit": {
+                "type": "string"
               }
             }
+          },
+          "variant": {
+            "enum": [
+              "resolved",
+              "legacy-verbatim"
+            ]
+          },
+          "authoritative": {
+            "type": "boolean"
+          },
+          "sourcePath": {
+            "type": "string",
+            "description": "Engine provenance (design-systems/<id>/source/); never an implementation source."
+          },
+          "assetsManifest": {
+            "type": "string"
+          },
+          "contractSha256": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[0-9a-f]{64}$",
+            "description": "sha256 of design-contract.json (design-system-files, resolved)."
+          },
+          "themes": {
+            "type": "array",
+            "items": {
+              "enum": [
+                "light",
+                "dark",
+                "compact"
+              ]
+            },
+            "description": "Themes present in the resolved package; includes light and dark."
+          },
+          "designBriefPath": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "design-brief.json, relative to artifactRoot."
           }
         }
       }

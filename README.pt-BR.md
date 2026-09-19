@@ -4,6 +4,12 @@
 
 Plugin de Claude Code para conduzir um workflow de desenvolvimento multiagente a partir de um PRD/especificação já pronta, com Codex, Antigravity/AGY e artefatos de auditoria.
 
+> **Papel legado `ui-prototype` bloqueado (4.24.0):** handoffs que ainda declaram o papel removido são bloqueados com `LEGACY_UI_PROTOTYPE_ROLE`; regere-os no Pensador >= 2.32.
+>
+> **Gates mecanicos de design (4.23.0):** o wave gate agora linta os arquivos front-end alterados (hex literal, px de espacamento/raio, `style={{}}` inline e `var(--x)` indefinido), a materializacao recalcula o `contractSha256` e le o `design-audit.json` real em vez de confiar no `validation.status` do handoff, e as flags de design do gate final de UI exigem arquivos de evidencia mecanica (`designEvidence.tokenLint`/`previewDiff`), nao booleans.
+>
+> **Handoff de design (4.22.0):** o contrato visual em `references/handoff-contract.md` (secao 6, byte-identica nos quatro plugins do workflow) passa a ter `design-systems/<id>/resolved/` como unico pacote normativo; `source/` guarda a proveniencia do engine. A entrada do handoff carrega `contractSha256`, `themes` e `designBriefPath`; token novo so entra por nova versao do Pensador (`DESIGN_CHANGE_REQUEST`).
+
 **[Read in English](README.md)** — English version available.
 
 ## Visão geral
@@ -18,7 +24,7 @@ Codex e Antigravity/AGY entram como subagentes especializados:
 |---|---|---|
 | Orchestrador de Harness | Claude CLI / Claude Code | Ingere o PRD/spec e coordena o workflow, contratos, ondas, validações, logs e decisões do usuário. |
 | Implementação back-end, banco, testes e ajustes | Codex (despacho direto via `codex-companion.mjs`; fallback `codex:codex-rescue`) | Executa tasks não front-end com `--model <gpt-5.6-terra|gpt-5.6-sol|gpt-5.6-luna> --effort <low|medium|high> --write`, os dois derivados da task (papel: implement/review/fix — nunca um default fixo). |
-| Implementação front-end e UX | Antigravity/AGY (`cc-antigravity-plugin:antigravity-coder`) | Executa tasks `FRONTEND_ONLY` e fatias front-end de `FULLSTACK`, consumindo tokens de design, protótipos de discovery (`prototypes/`) e ativos de marca reais (`assets/`). |
+| Implementação front-end e UX | Antigravity/AGY (`cc-antigravity-plugin:antigravity-coder`) | Executa tasks `FRONTEND_ONLY` e fatias front-end de `FULLSTACK`, consumindo tokens de design, previews gerados do design system (`preview/`) e ativos de marca reais (`assets/`). |
 | Review back-end pós-implementação | Codex (despacho direto via `codex-companion.mjs`, sem `--write`; fallback `codex:codex-rescue`) | Revisa **apenas o back-end** com `--effort high` ou cai para review interno read-only do orquestrador quando faltar quota. |
 | Review front-end pós-implementação | Antigravity/AGY (`cc-antigravity-plugin:antigravity-agent`, `--read-only --format json --model pro-high --effort high`) | Revisa **apenas o front-end** em modo read-only ou cai para review interno do orquestrador quando o AGY estiver indisponível. |
 
@@ -39,15 +45,15 @@ Esse check agregado só prova que o servidor está registrado *em algum lugar* d
 ### Workflow completo
 
 - **Fase 0 - Preflight, configuração do projeto e instalação assistida:** valida dependências, Node.js 22.13+, `node:sqlite`/FTS5, permissão `Bash(node:*)`, resolve a Project_Config (papéis acima), detecta os dois MCPs opcionais e oferece instalar qualquer dependência ausente que os papéis resolvidos realmente exigem.
-- **Fase 1 - Memória + especificação:** audita `.orchestrator/project-memory.md`, projeta o histórico FTS5 e lê o PRD/spec como fonte da verdade; ingere artefatos visuais do Pensador (`tokens.css`, `prototypes/`, `assets/`); somente fatos comprovados complementam o contexto.
+- **Fase 1 - Memória + especificação:** audita `.orchestrator/project-memory.md`, projeta o histórico FTS5 e lê o PRD/spec como fonte da verdade; ingere artefatos visuais do Pensador (`tokens.css`, `preview/`, `assets/`); somente fatos comprovados complementam o contexto.
 - **Fase 2 - Classificação das tasks:** gera categoria, dependências, complexidade, contrato, `expectedFiles`/`validationPlan`, `allowedPaths`, agente e features de routing.
 - **Fase 3 - Ondas, routing e isolamento:** aplica pisos heurísticos, consulta evidência histórica quando suficiente, valida roteamento e separa worktrees isoladas de tasks serializadas por overlap.
 - **Fase 4 - Contratos API/UI e materialização visual:** cria e valida deterministicamente contratos, wire format, casing, exemplos, estados e permissões para toda troca front-back, materializa o pacote visual autoritativo (`design-materialization.json`) e gera contratos fortemente tipados via `generate-contract-types.mjs`.
-- **Fase 5 - Delegação paralela:** cria worktrees elegíveis, adquire leases e envia tasks conforme `plan/waves.md`; Codex e AGY recebem, cada um, o modelo explicável selecionado, com o AGY recebendo os protótipos de descoberta como spec visual imperativa.
+- **Fase 5 - Delegação paralela:** cria worktrees elegíveis, adquire leases e envia tasks conforme `plan/waves.md`; Codex e AGY recebem, cada um, o modelo explicável selecionado, com o AGY recebendo os previews gerados do design system como spec visual imperativa.
 - **Fase 6 - Lifecycle Manager:** consulta adapters, persiste retornos antes de consumir, renova heartbeat/lease por atividade observável e trata stall/grace/interrupt/retry/cancel sem presumir resultado.
 - **Fase 7 - Integração:** executa Early Stack Boot (`smoke-test-infra.mjs`) na Wave 1 para validação rápida de infra em 2 minutos, roda Wave Quality Gates (`run-wave-gate.mjs`) entre ondas sem tokens LLM, e integra worktrees serialmente usando scripts determinísticos para diff, escopo, API/UI, wire format e validação.
 - **Fase 8 - Review back-end pós-implementação:** delega review final read-only ao Codex com `--effort high`, **somente do back-end**, e salva `review/review-final.md`. Se Codex ficar sem quota, o próprio Orchestrador faz review interno. Ignorada se não houver back-end.
-- **Fase 9 - Review front-end pós-implementação:** delega review final read-only ao AGY com `--read-only --format json --model pro-high --effort high`, **somente do front-end**, validando critérios de aceite, conformidade com o design system e fidelidade aos protótipos visuais de `prototypes/`, e salva `review/review-frontend.md`. Se o AGY estiver indisponível, o Orchestrador faz review interno. **Ignorada se não houver task front-end.**
+- **Fase 9 - Review front-end pós-implementação:** delega review final read-only ao AGY com `--read-only --format json --model pro-high --effort high`, **somente do front-end**, validando critérios de aceite, conformidade com o design system e fidelidade aos previews gerados em `preview/`, e salva `review/review-frontend.md`. Se o AGY estiver indisponível, o Orchestrador faz review interno. **Ignorada se não houver task front-end.**
 - **Fase 9.5 - E2E no navegador:** obrigatória sempre que a run tem front-end. Dirige os fluxos críticos em navegador real e verifica CORS, resolução de tenant/host, casing de resposta, estado da UI e o efeito final visível ao usuário. Topologia de mesma origem dispensa o gate por waiver explícito, com motivo registrado — nunca por derivação silenciosa.
 - **Fase 10 - Relatórios finais:** cria `report/workflow-log.md`, `report/subagents-context.md` e `report/implementation-report.md`, gerando a matriz de rastreabilidade da Seção 13 deterministicamente via `build-traceability-matrix.mjs`, consolidando timeline, contratos, validações, subagentes, Conversation IDs do AGY e status de entrega.
 - **Fase 11 - Entrega durável:** prepara e persiste o resumo/instruções, sem anunciar sucesso antes dos gates finais.

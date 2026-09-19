@@ -16,6 +16,8 @@ import {
 } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { isDeepStrictEqual } from "node:util";
+
+import { renameWithRetry } from "./fs-retry.mjs";
 import { validateUiEvidence } from "../validate-ui-evidence.mjs";
 import { validateHandoff } from "./handoff-validator.mjs";
 import {
@@ -365,6 +367,8 @@ function appendEventDurably(path, event) {
   }
 }
 
+export { renameWithRetry };
+
 function writeSnapshotAtomically(path, state) {
   mkdirSync(dirname(path), { recursive: true });
   const temporary = join(
@@ -378,7 +382,7 @@ function writeSnapshotAtomically(path, state) {
     fsyncSync(fd);
     closeSync(fd);
     fd = undefined;
-    renameSync(temporary, path);
+    renameWithRetry(temporary, path);
   } catch (error) {
     if (fd !== undefined) closeSync(fd);
     try {

@@ -5,11 +5,11 @@ import {
   mkdirSync,
   openSync,
   readFileSync,
-  renameSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { renameWithRetry } from "./fs-retry.mjs";
 
 /**
  * Fonte da verdade da Project_Config: papeis, executores permitidos, formato do
@@ -484,7 +484,7 @@ export function writeProjectConfig(projectRoot, config, options = {}) {
     } finally {
       closeSync(fd);
     }
-    renameSync(temporary, path);
+    renameWithRetry(temporary, path);
     temporary = null;
   } catch (error) {
     if (temporary !== null) {

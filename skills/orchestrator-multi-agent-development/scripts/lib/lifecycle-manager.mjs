@@ -1,5 +1,6 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { renameWithRetry } from "./fs-retry.mjs";
 
 import { artifactExists, artifactWritePath } from "./artifact-layout.mjs";
 import { adaptProbeSet } from "./executor-adapters.mjs";
@@ -46,7 +47,7 @@ function writeAtomic(path, value) {
   mkdirSync(dirname(path), { recursive: true });
   const temporary = `${path}.${process.pid}.tmp`;
   writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`, "utf8");
-  renameSync(temporary, path);
+  renameWithRetry(temporary, path);
 }
 
 function mergeProbeSets(...sets) {

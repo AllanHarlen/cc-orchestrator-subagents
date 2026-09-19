@@ -6,10 +6,10 @@ import {
   mkdirSync,
   openSync,
   readFileSync,
-  renameSync,
   writeFileSync,
 } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { renameWithRetry } from "./fs-retry.mjs";
 
 import { artifactTreePath } from "./artifact-layout.mjs";
 
@@ -271,6 +271,6 @@ export function persistExecutorControlResult(artifactDir, taskId, result) {
   } finally {
     closeSync(fd);
   }
-  renameSync(temporary, path);
+  renameWithRetry(temporary, path);
   return { id, path, evidence: `executor-result:${id}` };
 }

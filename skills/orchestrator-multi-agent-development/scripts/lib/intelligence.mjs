@@ -4,11 +4,11 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
-  renameSync,
   statSync,
   writeFileSync,
 } from "node:fs";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { renameWithRetry } from "./fs-retry.mjs";
 
 import { artifactTreePath } from "./artifact-layout.mjs";
 import { loadRun, updateTaskStatus } from "./orchestration-state.mjs";
@@ -149,7 +149,7 @@ function writeJsonAtomic(path, value) {
   mkdirSync(dirname(path), { recursive: true });
   const temporary = `${path}.${process.pid}.tmp`;
   writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`, "utf8");
-  renameSync(temporary, path);
+  renameWithRetry(temporary, path);
 }
 
 export function persistIntelligenceEvidence(result, options = {}) {

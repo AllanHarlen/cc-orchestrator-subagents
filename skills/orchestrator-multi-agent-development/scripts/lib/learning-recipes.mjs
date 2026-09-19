@@ -7,6 +7,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { basename, dirname, relative, sep, join, resolve } from "node:path";
+import { renameWithRetry } from "./fs-retry.mjs";
 
 import { artifactWritePath, resolveArtifact } from "./artifact-layout.mjs";
 import {
@@ -113,7 +114,7 @@ function assertRecipeId(value) {
 function atomicWrite(path, content) {
   const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`;
   writeFileSync(temporary, content, "utf8");
-  renameSync(temporary, path);
+  renameWithRetry(temporary, path);
 }
 
 function insideProject(projectRoot, source) {

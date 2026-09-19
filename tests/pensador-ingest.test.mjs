@@ -294,7 +294,7 @@ test("inspectVisualHandoff and ingestPensadorHandoff collect and expose brand-as
   writeJson(handoffPath, handoff);
 
   const visual = inspectVisualHandoff(handoff, handoffPath);
-  assert.equal(visual.prototypes.length, 0);
+  assert.equal("prototypes" in visual, false);
   assert.equal(visual.brandAssets.length, 1);
   assert.equal(visual.brandAssets[0].path, "assets/");
   assert.equal(visual.brandAssets[0].manifest, "assets/manifest.json");
@@ -304,7 +304,7 @@ test("inspectVisualHandoff and ingestPensadorHandoff collect and expose brand-as
 
   const ingested = ingestPensadorHandoff({ projectRoot: root });
   assert.equal(ingested.mode, "joint");
-  assert.equal(ingested.visualPackage.prototypes.length, 0);
+  assert.equal("prototypes" in ingested.visualPackage, false);
   assert.equal(ingested.visualPackage.brandAssets.length, 1);
   assert.equal(ingested.visualPackage.brandAssets[0].path, "assets/");
   assert.equal(ingested.visualPackage.brandAssets[0].manifestExists, true);
@@ -472,3 +472,22 @@ test("ingestPensadorHandoff exposes dataContract alongside visualPackage in join
   assert.deepEqual(result.dataContract.uiDataMap, { schemaVersion: 1, screens: [] });
 });
 
+
+test("inspectVisualHandoff blocks the removed ui-prototype role with LEGACY_UI_PROTOTYPE_ROLE", () => {
+  const root = fixture();
+  const handoffDir = join(root, ".pensador/app-v1");
+  mkdirSync(join(handoffDir, "prototypes"), { recursive: true });
+  const handoff = {
+    ...baseHandoff("app"),
+    artifacts: [{ role: "ui-prototype", path: "prototypes/", required: false, description: "legacy" }],
+  };
+  const handoffPath = join(handoffDir, "handoff.json");
+  writeJson(handoffPath, handoff);
+
+  const visual = inspectVisualHandoff(handoff, handoffPath);
+  const finding = visual.findings.find((f) => f.code === "LEGACY_UI_PROTOTYPE_ROLE");
+  assert.ok(finding);
+  assert.equal(finding.severity, "critical");
+  assert.match(finding.message, /2\.32/);
+  assert.equal("prototypes" in visual, false);
+});

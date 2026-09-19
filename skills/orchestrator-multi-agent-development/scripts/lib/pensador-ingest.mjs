@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 
+import { contractSha256 } from "./design-contract-hash.mjs";
 import { validateHandoff } from "./handoff-validator.mjs";
 
 /**
@@ -160,11 +161,48 @@ export function inspectDataContractArtifacts(handoff, handoffPath) {
   return result;
 }
 
+/**
+ * Mechanical checks on a resolved design package (cc-pensador >= 2.31): the real audit verdict and the
+ * contract hash, recomputed here instead of read from the handoff.
+ */
+function verifyResolvedDesignIntegrity(artifact, packageRoot) {
+  const findings = [];
+  const readJson = (file) => {
+    const path = join(packageRoot, file);
+    if (!existsSync(path)) return { missing: true };
+    try { return { value: JSON.parse(readFileSync(path, "utf8")) }; } catch { return { invalid: true }; }
+  };
+  const audit = readJson("design-audit.json");
+  if (audit.missing) findings.push({ severity: "high", code: "DESIGN_AUDIT_MISSING", path: `${artifact.path}/design-audit.json` });
+  else if (audit.invalid) findings.push({ severity: "high", code: "DESIGN_AUDIT_INVALID", path: `${artifact.path}/design-audit.json` });
+  else if (audit.value?.status !== "PASS") findings.push({ severity: "high", code: "DESIGN_AUDIT_NOT_PASS", path: artifact.path, auditStatus: audit.value?.status ?? null });
+
+  const contract = readJson("design-contract.json");
+  if (contract.missing || contract.invalid || typeof contract.value !== "object" || contract.value === null) {
+    findings.push({ severity: "high", code: "DESIGN_CONTRACT_UNREADABLE", path: `${artifact.path}/design-contract.json` });
+    return findings;
+  }
+  const actual = contractSha256(contract.value);
+  const declared = contract.value.sha256;
+  if (typeof declared !== "string" || declared === "") {
+    findings.push({ severity: "high", code: "CONTRACT_HASH_MISSING", path: `${artifact.path}/design-contract.json` });
+  } else if (declared !== actual) {
+    findings.push({ severity: "critical", code: "CONTRACT_HASH_MISMATCH", path: `${artifact.path}/design-contract.json`, source: "contract", expected: declared, actual });
+  }
+  const auditHash = audit.value?.contractSha256;
+  if (auditHash && auditHash !== actual) {
+    findings.push({ severity: "critical", code: "CONTRACT_HASH_MISMATCH", path: `${artifact.path}/design-audit.json`, source: "audit", expected: auditHash, actual });
+  }
+  if (typeof artifact.contractSha256 === "string" && artifact.contractSha256 !== actual) {
+    findings.push({ severity: "critical", code: "CONTRACT_HASH_MISMATCH", path: artifact.path, source: "handoff", expected: artifact.contractSha256, actual });
+  }
+  return findings;
+}
+
 export function inspectVisualHandoff(handoff, handoffPath) {
   const resolveArtifactRoot = buildArtifactRootResolver(handoff, handoffPath);
   const packages = [];
   const findings = [];
-  const prototypes = [];
   const brandAssets = [];
   const baselineArtifact = (handoff.artifacts ?? []).find((artifact) => artifact?.role === "project-baseline");
   let projectBaseline = null;
@@ -175,12 +213,13 @@ export function inspectVisualHandoff(handoff, handoffPath) {
   }
   for (const artifact of handoff.artifacts ?? []) {
     if (artifact?.role === "ui-prototype") {
-      const prototypeRoot = resolveArtifactRoot(artifact.path);
-      prototypes.push({
+      // Role removed in cc-pensador 2.28.0 and from the handoff contract in 2.32.0:
+      // never consumed, always a blocking finding.
+      findings.push({
+        severity: "critical",
+        code: "LEGACY_UI_PROTOTYPE_ROLE",
         path: artifact.path,
-        resolvedPath: prototypeRoot,
-        exists: existsSync(prototypeRoot),
-        description: artifact.description,
+        message: "Handoff declares the removed `ui-prototype` role. Regenerate the handoff with cc-pensador >= 2.32 (the design package in design-systems/<id>/resolved/ is now the only visual spec).",
       });
       continue;
     }
@@ -221,7 +260,9 @@ export function inspectVisualHandoff(handoff, handoffPath) {
       findings.push({ severity, code: "LEGACY_VERBATIM_DESIGN", path: artifact.path, message: "Handoff has no variant; reinforced visual gates are required." });
     } else {
       if (artifact.authoritative !== true) findings.push({ severity: "high", code: "DESIGN_NOT_AUTHORITATIVE", path: artifact.path });
-      if (artifact.validation?.status !== "PASS") findings.push({ severity: "high", code: "DESIGN_AUDIT_NOT_PASS", path: artifact.path });
+      // The handoff's own `validation.status` is a producer self-declaration and is never trusted:
+      // the verdict comes from the design-audit.json on disk, bound to the contract by its hash.
+      findings.push(...verifyResolvedDesignIntegrity(artifact, packageRoot));
       if (!artifact.materializeInto) findings.push({ severity: "high", code: "MATERIALIZATION_TARGET_MISSING", path: artifact.path });
     }
     for (const file of priorityFiles) {
@@ -246,7 +287,11 @@ export function inspectVisualHandoff(handoff, handoffPath) {
         if (actual !== asset.sha256) findings.push({ severity: "critical", code: "ASSET_HASH_MISMATCH", assetId: asset.id, path: source });
       }
     }
-    packages.push({ variant, authoritative: artifact.authoritative === true, packageRoot, materializeInto: artifact.materializeInto, priorityFiles, assets });
+    packages.push({
+      variant, authoritative: artifact.authoritative === true, packageRoot, materializeInto: artifact.materializeInto, priorityFiles, assets,
+      themes: Array.isArray(artifact.themes) ? artifact.themes : null,
+      designBriefPath: artifact.designBriefPath ? resolveArtifactRoot(artifact.designBriefPath) : null,
+    });
   }
   const imageryPlan = projectBaseline?.visualImageryPlan ?? null;
   // Two DISTINCT counts, deliberately not merged: `visualImageryPlan` is
@@ -273,7 +318,6 @@ export function inspectVisualHandoff(handoff, handoffPath) {
   }
   return {
     packages,
-    prototypes,
     brandAssets,
     projectBaseline,
     visualImageryPlan: imageryPlan,

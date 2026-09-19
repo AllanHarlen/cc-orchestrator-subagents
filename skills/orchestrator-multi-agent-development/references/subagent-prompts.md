@@ -204,7 +204,6 @@ Contexto:
 - especificacao (PRD/spec): <COLAR TRECHO RELEVANTE OU CAMINHO DO ARQUIVO>
 - task atual: <TASK ID - TITULO>
 - pacote visual autoritativo: <CAMINHOS design-contract.json, tokens.css, DESIGN.md e assets/manifest.json>
-- prototipos de referencia (spec visual dos fluxos criticos): <CAMINHO prototypes/ (ex.: .pensador/<slug>-vN/prototypes/)>
 - mapa tela -> contrato (fonte de dados obrigatoria): <CAMINHO ui-data-map.json — telas desta task e suas operacoes reais>
 
 Descricao:
@@ -230,19 +229,21 @@ Stack:
 
 Design System (Open Design) — CONSUMIR, NAO REINVENTAR:
 <COLAR SOMENTE SE houver design system; senao "N/A (sem design system nesta entrega)">
-- tokens (fonte de verdade): <CAMINHO tokens.css, ex.: packages/ui/design-systems/<id>/tokens.css>
-- fixtures de componente: <CAMINHO components.html>
-- decisoes/intencao: <CAMINHO design-system.md (modo PRD) | openspec/changes/<nome>/design.md + specs/ui-design-system/spec.md (modo Spec)>
-- preview de referencia (alvo visual): <CAMINHO preview/ (diretorio — ex.: packages/ui/design-systems/<id>/preview/)>
+- contrato (fonte de verdade, normativo): <CAMINHO design-contract.json, ex.: packages/ui/design-systems/<id>/design-contract.json> + <CAMINHO tokens.css>
+- brief de design (decisoes travadas do usuario): <CAMINHO design-brief.json, do handoff `designBriefPath`>; temas do pacote: <THEMES do handoff, ex.: light,dark>
+- fixtures de componente (derivadas do contrato): <CAMINHO components.html>
+- decisoes/intencao: <CAMINHO design-system.md (modo PRD) | openspec/changes/<nome>/design.md + specs/ui-design-system/spec.md (modo Spec)>; `DESIGN.md` — o front matter e normativo, a prosa so justifica
+- previews gerados (alvo visual, nos temas claro e escuro): <CAMINHO preview/ — `index.html`, `colors.html`, `typography.html`, `spacing.html`, `components.html`, `app.html`; ex.: packages/ui/design-systems/<id>/preview/>
 - assets aprovados: <CAMINHO assets/manifest.json>; copie conforme `materializeInto`, aplique `seedBindings` e nao solicite/sugira/gere imagens
-Regras de design (do skills-protocol do Open Design — obrigatorias):
-- cole o `tokens.css` como base e use as custom properties (`var(--*)`); NAO invente hex/raio/espacamento fora dos tokens;
-- use os prototipos HTML em prototypes/ como SPEC VISUAL do fluxo: replique layout, hierarquia, comportamento e textos reais aprovados pelo usuario, sem inventar telas do zero;
+Ordem normativa em caso de conflito: `design-contract.json`/`tokens.css` > `components.html` > prosa do `DESIGN.md`. O contrato e imutavel para esta task: precisa de token novo? NAO invente — registre `DESIGN_CHANGE_REQUEST` no relatorio da task (token so entra por nova versao do Pensador).
+Regras de design (obrigatorias):
+- cole o `tokens.css` como base e use as custom properties (`var(--*)`); NAO invente hex/raio/espacamento fora dos tokens. O gate de onda (`run-wave-gate.mjs`) REPROVA hex literal (inclusive fallback em `var(--x, #fff)`), px de espacamento/raio, `style={{}}` inline com espacamento/raio literal e `var(--x)` sem token definido nos arquivos front-end alterados;
+- implemente o tema conforme `design-brief.json`: `themeDefault` define o tema inicial e `themeExposure` (`toggle` | `system` | `light-only`) define se o app expoe alternancia (`[data-theme="dark"]`), segue `prefers-color-scheme` ou fica so claro; use so tokens semanticos (`--bg`, `--fg`, `--accent`…) — nunca um valor por tema no componente;
 - implemente os componentes batendo com os seletores/estados de `components.html` (default/hover/focus/active/disabled/loading/empty/error);
 - accent contido: no maximo 2x por pagina (hero + CTA) alem de links; nao floode;
 - sem sombra se Depth & Elevation = minimal; nada de emoji como icone;
 - quando o requisito conflitar com o system, aplique override DOCUMENTADO (nao um token solto novo);
-- o resultado deve poder ser comparado visualmente com o diretorio `preview/` (abrir `colors.html`, `spacing.html` ou `typography.html` conforme o system).
+- o resultado deve poder ser comparado visualmente com o diretorio `preview/` gerado do contrato (`index.html`, `colors.html`, `typography.html`, `spacing.html`, `components.html`, `app.html`), nos dois temas.
 
 Modelo AGY:
 <COLAR AGYMODEL>
@@ -429,7 +430,6 @@ Revise a implementacao front-end realizada pelos subagentes para a especificacao
 
 Leia:
 - a especificacao (PRD/spec) ingerida
-- prototipos de referencia em prototypes/ (quando disponiveis no handoff)
 - .orchestrator/runs/<nome>/plan/tasks-classification.md
 - .orchestrator/runs/<nome>/contracts/
 - .orchestrator/runs/<nome>/report/implementation-report.md secao 13 (matriz de rastreabilidade RF/CA -> evidencia)
@@ -437,7 +437,7 @@ Leia:
 
 Verifique:
 - aderencia a especificacao no escopo front-end;
-- fidelidade visual contra os prototipos em prototypes/: a tela implementada deve espelhar o layout e hierarquia aprovados no discovery;
+- fidelidade visual contra o preview/ gerado do design system: a tela implementada deve espelhar o layout e a hierarquia dos previews aprovados;
 - **cada criterio de aceite (`CA`) das tasks front-end validado por inspecao direta do codigo/comportamento** — nao delegue essa validacao a uma suite de testes; confirme o requisito olhando a implementacao real; confira a matriz de rastreabilidade contra a tela/componente real, nao apenas contra o texto do relatorio;
 - **`// TODO`, placeholder de conteudo fixo (copy generico onde o requisito pede dado real) ou estado vazio nao implementado no caminho de um `RF`/`CA` do escopo e achado CRITICO/bloqueante**, mesmo que o build/typecheck/lint passem;
 - consumo correto do contrato API/UI: wire format, casing JSON e serializacao real contra o TypeScript consumidor;
@@ -452,7 +452,9 @@ Gate de design system (quando houver design system — Open Design):
 - componentes batem com seletores/estados de `components.html` (default/hover/focus/active/disabled/loading/empty/error);
 - **elementos interativos (botoes, links, cards clicaveis) tem estado `:hover`/`:focus` real, implementado como regra CSS/CSS-Modules/styled/Tailwind — NAO como `style={{}}` inline.** Inline style e estruturalmente incapaz de expressar `:hover`/`:focus`/`@keyframes`; se `components.html` especifica hover (ex.: `.btn-primary:hover { background: var(--accent-hover); transform: translateY(-1px); }`), o componente entregue precisa do equivalente real, nao so o estado default. Grep rapido de sanidade: proporcao alta de `style={{` sem nenhuma regra `:hover`/`:focus` no CSS do projeto e sinal de gate falho;
 - accent usado no maximo 2x por pagina (hero + CTA) alem de links; sem flood; sem emoji como icone; sem sombra se Depth & Elevation = minimal;
-- telas-chave conferidas contra o diretorio `preview/` (diferenca de layout/hierarquia/contraste; abrir `colors.html`, `spacing.html` ou `typography.html` conforme os arquivos disponiveis no system);
+- telas-chave conferidas contra o diretorio `preview/` gerado do contrato (diferenca de layout/hierarquia/contraste; `index.html`, `colors.html`, `typography.html`, `spacing.html`, `components.html` e `app.html`, nos temas claro e escuro), e o tema entregue confere com `design-brief.json` (`themeDefault`/`themeExposure`);
+- a ordem normativa `design-contract.json`/`tokens.css` > `components.html` > prosa foi respeitada; token novo sem `DESIGN_CHANGE_REQUEST` e violacao;
+- `checks.designTokens` do `run-wave-gate.mjs` da onda esta `PASS` (nao `SKIPPED` por falta de `--tokens-css`); a saida vira `designEvidence.tokenLint` do `ui-evidence.json`;
 - no modo Spec, os requisitos da capability `ui-design-system` (specs/ui-design-system/spec.md) sao atendidos (cada cenario);
 - anti-padroes da secao 9 do DESIGN.md ausentes do codigo final.
 - Trate violacao de design system como problema BLOQUEANTE quando contrariar requisito explicito (override sem justificativa, token inventado, accent flood, elemento interativo sem hover/focus real).

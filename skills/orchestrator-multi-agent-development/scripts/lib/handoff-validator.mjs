@@ -278,6 +278,19 @@ export function validateHandoff(handoff) {
       if (typeof artifact.required !== "boolean") {
         push("INVALID_ARTIFACT_REQUIRED", `${path}.required must be a boolean`, `${path}.required`);
       }
+      if (artifact.role === "design-system-files" && artifact.variant === "resolved") {
+        // Resolved Open Design package (handoff-contract.md section 6): the audit
+        // hash, the themes and the brief path travel with the entry.
+        if (artifact.contractSha256 != null && !(typeof artifact.contractSha256 === "string" && /^[0-9a-f]{64}$/.test(artifact.contractSha256))) {
+          push("INVALID_CONTRACT_SHA256", `${path}.contractSha256 must be null or a 64-char lowercase hex sha256`, `${path}.contractSha256`);
+        }
+        if (artifact.themes != null && !(Array.isArray(artifact.themes) && ["light", "dark"].every((theme) => artifact.themes.includes(theme)))) {
+          push("INVALID_DESIGN_THEMES", `${path}.themes must be an array including "light" and "dark"`, `${path}.themes`);
+        }
+        if (artifact.designBriefPath != null && !isNonEmptyString(artifact.designBriefPath)) {
+          push("INVALID_DESIGN_BRIEF_PATH", `${path}.designBriefPath must be null or a non-empty string`, `${path}.designBriefPath`);
+        }
+      }
     });
   }
 

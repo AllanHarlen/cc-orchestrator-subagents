@@ -424,3 +424,49 @@ test("CLI: exits 1 with a clear error when the file is not valid JSON", () => {
   assert.equal(result.status, 1);
   assert.equal(JSON.parse(result.stdout).errors[0].code, "INVALID_JSON");
 });
+
+// Resolved Open Design package fields (handoff-contract.md section 6): every
+// plugin's validator must enforce the same semantics.
+const resolvedDesignEntry = (overrides = {}) => ({
+  role: "design-system-files",
+  path: "design-systems/gestuor/resolved/",
+  required: true,
+  variant: "resolved",
+  authoritative: true,
+  sourcePath: "design-systems/gestuor/source/",
+  materializeInto: "packages/ui/design-systems/gestuor/",
+  contractSha256: "a".repeat(64),
+  themes: ["light", "dark"],
+  designBriefPath: "design-brief.json",
+  validation: { status: "PASS", audit: "design-audit.json" },
+  ...overrides,
+});
+
+test("accepts a resolved design-system-files entry with contractSha256, themes and designBriefPath", () => {
+  const result = validateHandoff(validPensadorHandoff({ artifacts: [resolvedDesignEntry()] }));
+  assert.equal(result.ok, true, JSON.stringify(result.errors));
+});
+
+test("accepts contractSha256 null and designBriefPath null on a resolved entry", () => {
+  const result = validateHandoff(validPensadorHandoff({ artifacts: [resolvedDesignEntry({ contractSha256: null, designBriefPath: null })] }));
+  assert.equal(result.ok, true, JSON.stringify(result.errors));
+});
+
+test("rejects a malformed contractSha256 on a resolved entry", () => {
+  const result = validateHandoff(validPensadorHandoff({ artifacts: [resolvedDesignEntry({ contractSha256: "xyz" })] }));
+  assert.ok(result.errors.some((e) => e.code === "INVALID_CONTRACT_SHA256"));
+});
+
+test("rejects resolved themes missing dark", () => {
+  const result = validateHandoff(validPensadorHandoff({ artifacts: [resolvedDesignEntry({ themes: ["light"] })] }));
+  assert.ok(result.errors.some((e) => e.code === "INVALID_DESIGN_THEMES"));
+});
+
+test("rejects an empty designBriefPath on a resolved entry", () => {
+  const result = validateHandoff(validPensadorHandoff({ artifacts: [resolvedDesignEntry({ designBriefPath: "" })] }));
+  assert.ok(result.errors.some((e) => e.code === "INVALID_DESIGN_BRIEF_PATH"));
+});
+
+test("the removed ui-prototype role is not a valid Pensador role", () => {
+  assert.equal(HANDOFF_ROLES_BY_STAGE.pensador.includes("ui-prototype"), false);
+});

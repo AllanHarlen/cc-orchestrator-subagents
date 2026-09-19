@@ -1,5 +1,29 @@
 # Changelog
 
+## [4.21.0] - 2026-09-19 - Guard do estado da run, handoff validado no DONE e sync com cc-pensador 2.28/2.29
+
+Endurece o plugin contra as falhas observadas numa run real do Pensador (OficinaAI, sessao
+`oficinaai-dd`, 2026-09-18): etapas delegadas a um fork em segundo plano (74 min sem progresso),
+checkpoint movido a mao de `INIT` para `DONE` pulando seis estagios, e um `handoff.json` escrito a
+mao que reprovava em `validate-handoff.mjs` apresentado como "PRD completo". O estado deste plugin
+ja e event-sourced e gated; o que faltava era impedir o contorno manual e validar o handoff no fechamento.
+
+- **Novo hook `PreToolUse`** (`hooks/hooks.json` → `scripts/guard-state.mjs`, decisao em
+  `lib/state-guard.mjs`): bloqueia `Edit`/`Write`/`MultiEdit` e escritas via Bash/PowerShell em
+  `state.json`, `events.jsonl` e `.state.lock` dentro de `.orchestration/` e `.orchestrator/`. Leituras e o proprio `orchestration-state.mjs`
+  passam; falha aberta. O `verify`/replay do CLI continua sendo a rede de seguranca.
+- **`auditRunCompletion()` valida o handoff**: `report/handoff.json` que reprova em `validateHandoff()` (ou nao
+  e JSON) entra em `invalidHandoff` e impede `complete`/`DONE` (`RUN_COMPLETION_GATES_FAILED`); a run fecha
+  PARTIAL. O fixture de teste que usava `{}` como handoff — exatamente o defeito — passa a usar um handoff valido.
+- **SKILL**: nova secao "Execucao no fio principal e estado so via CLI" — proibe delegar a conducao a
+  fork/segundo plano/`ScheduleWakeup`/`/loop`, proibe editar o estado a mao, exige validar o handoff e
+  obriga o recap final a declarar o que foi pulado, dispensado ou degradado (nunca "concluido" com lacunas).
+- Sync com o contrato do `cc-pensador` 2.28: role `ui-prototype` removido de `HANDOFF_ROLES_BY_STAGE.pensador`
+  e do `handoff-contract.md` (byte-identico nos 4 plugins).
+- `pensador-ingest`: o teste de coleta visual deixa de exigir `ui-prototype` (o Pensador 2.28+ nao gera mais prototipos); `workflow.md` ajustado.
+- Versao 4.21.0 (a 4.20.0 esta reservada pela PR #7, fallback de cota); a base desta branch inclui a PR #7.
+- Testes: `tests/state-guard.test.mjs` e o caso "run cannot be DONE with a hand-written handoff.json" em `tests/orchestration-state.test.mjs`.
+
 ## [4.20.0] — 2026-09-17 — Fallback de cota opt-in (claude-code -> codex -> agy) e worktree sem Git instalado
 
 Dois pedidos independentes do usuario sobre o mesmo plugin: (1) hoje `QUOTA_EXHAUSTED`/`QUOTA_EXAUSTED`

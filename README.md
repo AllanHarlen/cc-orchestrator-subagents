@@ -75,6 +75,8 @@ Coordination artifacts and final reports live under `.orchestrator/runs/<name>/`
 - **Codex Sandbox:** external network blocked for packages/restore, missing package in local cache or write outside allowed working directory becomes `BLOCKED` with evidence.
 - **AGY Limit on Windows:** AGY prompts above 28,000 chars are divided into subtasks by deliverables before delegation to avoid `ENAMETOOLONG`.
 
+> **Guard rails (4.21.0):** the run state (`state.json`, `events.jsonl`) is written only by `orchestration-state.mjs` — a `PreToolUse` hook blocks hand-edits; `run --status DONE` refuses a `handoff.json` that fails `validateHandoff()`; the run is conducted in the main session (never delegated to a fork/background agent) and the final recap must disclose skipped, waived or degraded work.
+
 ## Installation
 
 Local:

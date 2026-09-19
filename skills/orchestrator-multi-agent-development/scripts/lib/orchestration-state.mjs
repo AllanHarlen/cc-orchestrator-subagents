@@ -17,6 +17,7 @@ import {
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { validateUiEvidence } from "../validate-ui-evidence.mjs";
+import { validateHandoff } from "./handoff-validator.mjs";
 import {
   ARTIFACT_LAYOUT_VERSION,
   SUPPORTED_ARTIFACT_LAYOUT_VERSIONS,
@@ -4148,6 +4149,7 @@ function completionAudit(artifactDir, state) {
   const missingArtifacts = requiredArtifacts.filter(
     (name) => !artifactExists(artifactDir, name),
   );
+  const invalidHandoff = handoffValidationFindings(artifactDir);
   const phaseComplete = Number(state.lastSafePhase) >= 12 &&
     Number(state.phase) === 12 &&
     state.phaseStatus === "DONE";
@@ -4166,6 +4168,7 @@ function completionAudit(artifactDir, state) {
     waivedGates.length === 0 &&
     invalidDelegations.length === 0 &&
     missingArtifacts.length === 0 &&
+    invalidHandoff.length === 0 &&
     requirementsEvidence.valid;
   return {
     taskCount: tasks.length,
@@ -4192,10 +4195,28 @@ function completionAudit(artifactDir, state) {
       code: "DELEGATION_WITHOUT_NEXT_STAGE",
     })),
     missingArtifacts,
+    invalidHandoff,
     requirementsEvidence,
     recommendedRunStatus: complete ? "DONE" : "PARTIAL",
     complete,
   };
+}
+
+/**
+ * Findings de `validateHandoff()` sobre o `handoff.json` da run (vazio quando valido ou ausente —
+ * a presenca ja e exigida por `requiredArtifacts`). Um handoff escrito a mao, sem `handoffVersion`,
+ * `stage`, `producer`, ... ja foi entregue como concluido numa run real do Pensador; aqui ele
+ * impede o `DONE` em vez de deixar o proximo estagio degradar para descoberta por convencao.
+ */
+function handoffValidationFindings(artifactDir) {
+  const resolved = resolveArtifact(artifactDir, "handoff.json");
+  if (!resolved) return [];
+  try {
+    const result = validateHandoff(JSON.parse(readFileSync(resolved.path, "utf8")));
+    return result.ok ? [] : (result.errors ?? []).map((error) => ({ code: error.code, path: error.path ?? null }));
+  } catch (error) {
+    return [{ code: "HANDOFF_NOT_JSON", path: null, message: error.message }];
+  }
 }
 
 /** Le `nextStage.consumer` de `report/handoff.json`, ou `null` quando o

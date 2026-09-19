@@ -278,18 +278,15 @@ test("listPensadorHandoffs never touches .pensador/ (read-only)", () => {
   assert.equal(before, after);
 });
 
-test("inspectVisualHandoff and ingestPensadorHandoff collect and expose ui-prototype and brand-assets", () => {
+test("inspectVisualHandoff and ingestPensadorHandoff collect and expose brand-assets (no prototypes since cc-pensador 2.28)", () => {
   const root = fixture();
   const handoffDir = join(root, ".pensador/app-v1");
-  mkdirSync(join(handoffDir, "prototypes"), { recursive: true });
-  writeFileSync(join(handoffDir, "prototypes/index.html"), "<html>Prototype</html>", "utf8");
   mkdirSync(join(handoffDir, "assets"), { recursive: true });
   writeFileSync(join(handoffDir, "assets/manifest.json"), JSON.stringify({ assets: [] }), "utf8");
 
   const handoff = {
     ...baseHandoff("app"),
     artifacts: [
-      { role: "ui-prototype", path: "prototypes/", required: false, description: "Protótipos HTML estáticos dos fluxos críticos" },
       { role: "brand-assets", path: "assets/", required: false, manifest: "assets/manifest.json", description: "Diretório de mídia e brand assets" },
     ],
   };
@@ -297,10 +294,7 @@ test("inspectVisualHandoff and ingestPensadorHandoff collect and expose ui-proto
   writeJson(handoffPath, handoff);
 
   const visual = inspectVisualHandoff(handoff, handoffPath);
-  assert.equal(visual.prototypes.length, 1);
-  assert.equal(visual.prototypes[0].path, "prototypes/");
-  assert.equal(visual.prototypes[0].exists, true);
-  assert.equal(visual.prototypes[0].description, "Protótipos HTML estáticos dos fluxos críticos");
+  assert.equal(visual.prototypes.length, 0);
   assert.equal(visual.brandAssets.length, 1);
   assert.equal(visual.brandAssets[0].path, "assets/");
   assert.equal(visual.brandAssets[0].manifest, "assets/manifest.json");
@@ -310,9 +304,7 @@ test("inspectVisualHandoff and ingestPensadorHandoff collect and expose ui-proto
 
   const ingested = ingestPensadorHandoff({ projectRoot: root });
   assert.equal(ingested.mode, "joint");
-  assert.equal(ingested.visualPackage.prototypes.length, 1);
-  assert.equal(ingested.visualPackage.prototypes[0].path, "prototypes/");
-  assert.equal(ingested.visualPackage.prototypes[0].exists, true);
+  assert.equal(ingested.visualPackage.prototypes.length, 0);
   assert.equal(ingested.visualPackage.brandAssets.length, 1);
   assert.equal(ingested.visualPackage.brandAssets[0].path, "assets/");
   assert.equal(ingested.visualPackage.brandAssets[0].manifestExists, true);

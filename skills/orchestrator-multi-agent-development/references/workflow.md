@@ -123,7 +123,7 @@ node "${CLAUDE_SKILL_DIR}/scripts/orchestration-state.mjs" init \
 - Nao reescreva, nao replaneje e nao reinterprete a demanda. O papel do orquestrador e **orquestrar**, nao planejar.
 - **Contrato de API:** quando houver `api-contract` (maquina-legivel), ele e a **fonte da verdade** dos contratos da Fase 4 — suba o mock a partir dele e valide o codigo contra ele (campo `validation`). O `communication-contract` e apenas a visao legivel.
 - **Design (Open Design):** quando houver `design-system-files`, guarde os caminhos verbatim e o `materializeInto` de cada `<id>` para materializar na Fase 4 (ver Fase 4).
-- **Protótipos e Brand Assets:** quando houver `ui-prototype` (`prototypes/`) e `brand-assets` (`assets/`), use-os como SPEC VISUAL e pacote de mídia fechados do Pensador nos prompts do AGY (Fase 5) e gate de fidelidade visual (Fase 9).
+- **Brand Assets:** quando houver `brand-assets` (`assets/`), use-os como pacote de mídia fechado do Pensador nos prompts do AGY (Fase 5) e gate de fidelidade visual (Fase 9). (O Pensador 2.28+ não gera mais protótipos HTML `ui-prototype`; handoffs antigos que os declaram devem ser regerados.)
 
 ### 1.2 Extrair os entregaveis e tasks
 

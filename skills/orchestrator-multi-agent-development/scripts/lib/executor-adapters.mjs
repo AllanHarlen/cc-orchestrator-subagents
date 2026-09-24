@@ -61,7 +61,23 @@ function normalizeStatus(raw, text, executor) {
   const explicit = String(raw ?? "").trim().toUpperCase();
   let normalized = STATUS_ALIASES.get(explicit) ?? explicit;
   const textual = statusFromText(text);
-  if (executor === "agy" && ["QUOTA_EXHAUSTED", "AUTH_REQUIRED", "AGY_MISSING", "TIMEOUT"].includes(textual)) {
+  // AGY reports many distinct failure modes (quota, auth, missing binary,
+  // timeout) under one generic explicit status (ERROR, aliased to FAILED
+  // above), with the real reason only in a free-form error/reason field — so
+  // the free-form text is the authoritative signal for AGY whenever the
+  // explicit status is itself generic/ambiguous (FAILED, or missing/garbage,
+  // i.e. not in CANONICAL at all).
+  //
+  // It must never override an explicit status that already says something
+  // specific and non-ambiguous — DONE, RUNNING, PENDING, CANCELLED, BLOCKED,
+  // STALLED. Before this guard, a DONE task whose own summary/reason text
+  // happened to mention "timeout", "quota" or "unauthorized" in an unrelated
+  // business context (e.g. a SaaS billing/plans domain — exactly the
+  // OficinaAI PRD this was found against) was silently reclassified as an
+  // infra failure, discarding the real terminal status.
+  const agyTextOverridesGenericStatus = executor === "agy" &&
+    (normalized === "FAILED" || !CANONICAL.has(normalized));
+  if (agyTextOverridesGenericStatus && ["QUOTA_EXHAUSTED", "AUTH_REQUIRED", "AGY_MISSING", "TIMEOUT"].includes(textual)) {
     return textual === "QUOTA_EXHAUSTED" ? "QUOTA_EXAUSTED" : textual;
   }
   if (!CANONICAL.has(normalized)) normalized = textual;

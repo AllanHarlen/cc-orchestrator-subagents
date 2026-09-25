@@ -1,5 +1,23 @@
 # Changelog
 
+## [4.24.2] — 2026-09-24 — AGY: status explicito nunca e sobrescrito por vocabulario de negocio no texto
+
+- **Causa:** `executor-adapters.mjs::normalizeStatus` deixava a varredura de texto livre
+  (`reason`/`error`/`summary`, e o `error` de um envelope stream-json) sobrescrever
+  incondicionalmente qualquer status explicito reportado pelo AGY — inclusive `DONE`, `RUNNING`,
+  `BLOCKED`, `CANCELLED`, `STALLED` — sempre que o texto mencionasse "quota", "timeout" ou
+  "unauthorized"/"agy not found". Um dominio de negocio como o de um SaaS com planos e cobranca
+  (a run real que expos isso, OficinaAI) usa exatamente esse vocabulario em texto legitimo; uma
+  task `DONE` cujo resumo falasse em "alerta de quota do plano" ou "timeout do upstream de
+  cobranca" era reclassificada como falha de infraestrutura, descartando o status real.
+- **Correcao:** a varredura de texto so pode desambiguar um status generico/ambiguo do AGY
+  (`FAILED`, ou ausente/invalido) — nunca sobrescreve um status explicito ja especifico e nao
+  ambiguo. O comportamento de disambiguar `ERROR`/`FAILED` a partir do proprio campo `error`
+  (ex.: "resource exhausted" -> `QUOTA_EXAUSTED`) continua identico.
+- **Testes:** `tests/executor-adapters.test.mjs` (novo, 10 casos), cobrindo AGY e Codex, incluindo
+  o erro real do Codex "Selected model is at capacity" (capacidade transitoria, confirmado que nao
+  bate no padrao de cota). Suite completa: 511/511.
+
 ## [4.24.1] — 2026-09-19 — Rename atomico resistente a bloqueio transitorio (Windows)
 
 - **Causa do teste instavel `reconciliation never regresses a terminal task`:** nao era a logica de reconciliacao (estado terminal e preservado de forma deterministica) e sim um `EPERM` em `renameSync(tmp -> state.json)` dentro de `writeSnapshotAtomically`. No Windows, renomear sobre um arquivo que outro processo tem aberto por um instante (antivirus, indexador, leitor concorrente) falha de forma transitoria; sem retry, o `commitEvent` de qualquer `resumeRunAtDirectory` podia lancar. Reproduzido sob carga (8 processos paralelos): 1 falha em 40 execucoes, com o mesmo `EPERM` em outro teste do arquivo.

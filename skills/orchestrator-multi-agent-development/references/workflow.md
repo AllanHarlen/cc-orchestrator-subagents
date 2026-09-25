@@ -294,6 +294,14 @@ node "${CLAUDE_SKILL_DIR}/scripts/materialize-visual-handoff.mjs" --root "." --h
 - No modo Spec, o design chega em `design.md` + `specs/ui-design-system/spec.md`: use-os como requisito normativo do gate.
 - Quando nao ha front-end (`visualMaterialization` nao e `required`), o gate fica `N/A` automaticamente — nao ha o que materializar.
 
+### 4.0b Protótipo de design (`design-prototype`) — referência de fidelidade para o AGY reproduzir na stack do projeto
+
+Quando o handoff do Pensador contiver um artefato com o role `design-prototype` (protótipo interativo HTML/CSS/JS gerado por um agente de design do Open Design em `<featurePath>/prototypes/` — obrigatório sempre que o Open Design foi usado, ver `handoff-contract.md` secao 5), **não existe conversão mecânica de HTML para a linguagem de destino**: o Open Design só gera HTML/CSS/JS, e a stack real do projeto (React, Vue, Angular, Blazor, …) é a definida pelo PRD (`state.techStack`/`project-baseline.json`). A reprodução é delegada ao AGY como parte da própria implementação da tela, não como uma fase de conversão separada:
+
+- Guarde o caminho do `prototypes/` junto dos caminhos materializados de `design-system-files` (4.0). Toda task front-end (Fase 5) cuja tela tenha um protótipo correspondente recebe no prompt: o(s) arquivo(s) HTML do protótipo relevantes à tela, `design-contract.json`/`tokens.css`/`DESIGN.md` e a stack de destino do projeto, com a instrução explícita de reproduzir a hierarquia visual, os estados de interação e o layout do protótipo **nos componentes idiomáticos da stack real** — nunca copiar o HTML literal nem embrulhá-lo num componente genérico.
+- O protótipo é referência de fidelidade, não fonte de verdade de tokens: `design-contract.json`/`tokens.css` continuam a autoridade normativa (ordem de precedência da secao 6 do `handoff-contract.md`); um HTML de protótipo com um valor solto fora de `var(--*)` não vira precedente.
+- **Referência para a Fase 9:** o gate de fidelidade visual (`visualAudit`) compara as telas implementadas contra o `preview/` do design system **e** contra as capturas do protótipo (quando existir), como evidência adicional de layout/hierarquia — não como um diff mecânico de arquivos.
+
 ### 4.1 Contratos
 
 Crie `.orchestrator/runs/<nome>/contracts/*.md` para:

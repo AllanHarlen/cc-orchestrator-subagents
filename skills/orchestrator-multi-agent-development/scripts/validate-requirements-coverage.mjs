@@ -52,8 +52,8 @@ function main(argv) {
   if (coverage.applicable && !coverage.complete) {
     const error = new Error(
       `${coverage.uncoveredRequirementIds.length} of ${coverage.totalRequirements} requirement(s) have no task covering them: `
-        + `${coverage.uncoveredRequirementIds.join(", ")}. Every RF the Pensador extracted must be claimed by at least one `
-        + `task's requirementIds before the run can close DONE (WORKFLOW.md: "o Orchestrador é obrigado a atender todos os critérios de aceite").`,
+        + `${coverage.uncoveredRequirementIds.join(", ")}. Every RF/RNF/ARC id the Pensador extracted must be claimed by at least `
+        + `one task's requirementIds before the run can close DONE (WORKFLOW.md: "o Orchestrador é obrigado a atender todos os critérios de aceite").`,
     );
     error.code = "REQUIREMENTS_NOT_COVERED";
     error.details = coverage;

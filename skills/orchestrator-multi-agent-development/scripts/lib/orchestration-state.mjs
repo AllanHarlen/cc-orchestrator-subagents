@@ -756,6 +756,36 @@ export function validateState(state) {
   return state;
 }
 
+// Sweep e reconcile rodam a cada poll da Fase 6. Gravar o mapa completo de
+// tasks em cada um fez 418 de 499 eventos de uma run real ocuparem ~97% de um
+// events.jsonl de 10 MB — e todo loadRun le e reaplica o log inteiro. Eles
+// agora gravam so as tasks alteradas (`changedTasks`); `tasks` completo segue
+// aceito para eventos antigos e quando o conjunto de ids muda.
+function taskDeltaPayload(previousTasks, nextTasks) {
+  const previous = previousTasks ?? {};
+  const next = nextTasks ?? {};
+  const previousIds = Object.keys(previous);
+  const nextIds = Object.keys(next);
+  if (previousIds.length !== nextIds.length || nextIds.some((id) => !Object.hasOwn(previous, id))) {
+    return { tasks: next };
+  }
+  const changedTasks = {};
+  for (const id of nextIds) {
+    if (JSON.stringify(previous[id]) !== JSON.stringify(next[id])) changedTasks[id] = next[id];
+  }
+  return { changedTasks };
+}
+
+function applyTaskDelta(state, payload) {
+  if (payload.tasks) {
+    state.tasks = clone(payload.tasks);
+    return;
+  }
+  for (const [taskId, task] of Object.entries(payload.changedTasks ?? {})) {
+    state.tasks[taskId] = clone(task);
+  }
+}
+
 function reduceEvent(previousState, event) {
   let state = previousState == null ? null : clone(previousState);
   const payload = event.payload ?? {};
@@ -789,7 +819,7 @@ function reduceEvent(previousState, event) {
       state.currentWave = payload.currentWave;
       break;
     case "STALL_SWEEP_COMPLETED":
-      state.tasks = clone(payload.tasks);
+      applyTaskDelta(state, payload);
       state.status = payload.runStatus;
       state.currentWave = payload.currentWave;
       state.lifecycle = clone(payload.lifecycle);
@@ -801,7 +831,7 @@ function reduceEvent(previousState, event) {
       state.resume = clone(payload.resume);
       break;
     case "RUN_RECONCILED":
-      state.tasks = clone(payload.tasks);
+      applyTaskDelta(state, payload);
       state.status = payload.runStatus;
       state.currentWave = payload.currentWave;
       state.repository = clone(payload.repository);
@@ -1423,23 +1453,45 @@ function blockTitle(block) {
     .trim() || block.id;
 }
 
+// Valores de campo sem crase (`contractIds: CT-01`, `allowedPaths: backend/**`)
+// eram descartados em silencio: numa run real (OficinaAI, 2026-09-21) todas as
+// 13 tasks chegaram ao state.json sem contractIds/allowedPaths/expectedFiles/
+// validationPlan, o que desligou a validacao de escopo e o planner de worktree
+// e impediria o fechamento DONE (tasksWithoutEvidencePlan). Crase continua
+// tendo precedencia; sem crase, o valor e dividido pelo separador do campo.
+function splitPlainFieldValue(value, separator) {
+  return value
+    .split(separator)
+    .map((item) => item.trim().replace(/[.;]+$/, "").trim())
+    .filter((item) => item && !/^(?:n\/a|none|nenhum|nenhuma|-)$/i.test(item));
+}
+
 function parseExpectedFiles(text) {
   const lines = text.split(/\r?\n/).filter((line) =>
     /(?:expectedFiles|producedFiles|arquivos esperados|arquivos produzidos)/i.test(line),
   );
   const paths = [];
   for (const line of lines) {
-    for (const match of line.matchAll(/`([^`]+)`/g)) paths.push(match[1]);
+    const backticked = [...line.matchAll(/`([^`]+)`/g)].map((match) => match[1]);
+    if (backticked.length > 0) {
+      paths.push(...backticked);
+      continue;
+    }
+    const field = line.match(/^\s*(?:[-*]\s*)?[^:=|]+[:=]\s*(.+)$/);
+    if (field) paths.push(...splitPlainFieldValue(field[1], /[,;]/));
   }
   return [...new Set(paths)];
 }
 
-function parseBacktickValues(text, pattern) {
+function parseBacktickValues(text, pattern, plainSeparator = /[,;]/) {
   const values = [];
   for (const line of text.split(/\r?\n/)) {
     const field = line.match(/^\s*(?:[-*]\s*)?([^:=|]+)\s*[:=]\s*(.*)$/i);
-    if (!field || !pattern.test(field[1])) continue;
-    for (const match of field[2].matchAll(/`([^`]+)`/g)) values.push(match[1].trim());
+    if (!field || !pattern.test(field[1].replace(/[`*_]/g, "").trim())) continue;
+    const backticked = [...field[2].matchAll(/`([^`]+)`/g)].map((match) => match[1].trim());
+    values.push(...(backticked.length > 0
+      ? backticked
+      : splitPlainFieldValue(field[2], plainSeparator)));
   }
   return [...new Set(values.filter(Boolean))];
 }
@@ -1450,6 +1502,13 @@ function parseScalarField(text, names) {
   return match?.[1]?.replace(/[`*_]/g, "").trim() ?? null;
 }
 
+// RF (functional), RNF (non-functional, requirements.json's nonFunctionalRequirements[]) and ARC
+// (architecture patterns, requirements.json's architecturePatterns[], synthetic ARC-XX ids) — plus
+// US and a domain infix (RF-AUTH-01), matching the Pensador's own RF_ID_SOURCE. Widened together
+// with REQUIREMENT_ID_RE in requirements-coverage.mjs, which is what actually enforces coverage;
+// this one only needs to agree on which ids a task's declaration can carry into state.json.
+const REQUIREMENT_ID_RE = /\b(?:RF|RNF|ARC|US)-(?:[A-Z]+-)?\d+[A-Z]?\b/gi;
+
 function parseRequirementIds(text) {
   const values = [];
   let collecting = false;
@@ -1457,12 +1516,12 @@ function parseRequirementIds(text) {
     const field = line.match(/^\s*(?:[-*]\s*)?(?:requirementIds|requirement ids|requisitos)\s*[:=]\s*(.*)$/i);
     if (field) {
       collecting = true;
-      values.push(...(field[1].match(/\b(?:RF|US)-\d+\b/gi) ?? []));
+      values.push(...(field[1].match(REQUIREMENT_ID_RE) ?? []));
       continue;
     }
     if (!collecting) continue;
     if (/^\s{2,}(?:[-*]\s*)?/.test(line)) {
-      values.push(...(line.match(/\b(?:RF|US)-\d+\b/gi) ?? []));
+      values.push(...(line.match(REQUIREMENT_ID_RE) ?? []));
       continue;
     }
     collecting = false;
@@ -1492,17 +1551,22 @@ function parseTaskPlanningMetadata(text) {
     agyEffort,
     agyTimeout,
     agyFormat,
+    // validationPlan em prosa separa itens por ";" — virgula e comum dentro
+    // de um item ("testes de isolamento, rotacao e reuso").
     validationPlan: parseBacktickValues(
       text,
       /(?:validationPlan|validation command|comando de validacao|comando de validação|validacoes|validações)/i,
+      /;/,
     ),
     allowedPaths: parseBacktickValues(
       text,
       /(?:allowedPaths|allowed paths|caminhos permitidos|task scope|escopo da task)/i,
     ),
     requirementIds: parseRequirementIds(text),
-    contractIds: parseBacktickValues(text, /^(?:contractIds?|contratos?)$/i)
-      .filter((value) => /^CT-[A-Z0-9]+(?:-[A-Z0-9]+)*$/i.test(value)),
+    contractIds: [...new Set(parseBacktickValues(text, /^(?:contractIds?|contratos?)$/i)
+      .flatMap((value) => value.match(/^CT-[A-Z0-9]+(?:-[A-Z0-9]+)*$/i)
+        ? [value]
+        : value.match(/\bCT-\d+[A-Z0-9]*\b/gi) ?? []))],
   };
 }
 
@@ -2964,7 +3028,14 @@ export function sweepStalledTasks(artifactDir, options = {}) {
       artifactDir,
       state,
       "STALL_SWEEP_COMPLETED",
-      { tasks, runStatus, currentWave, lifecycle, stalled, graceExpired },
+      {
+        ...taskDeltaPayload(state.tasks, tasks),
+        runStatus,
+        currentWave,
+        lifecycle,
+        stalled,
+        graceExpired,
+      },
       options,
     );
     return {
@@ -3339,7 +3410,7 @@ export function reconcileRunAtDirectory(artifactDir, options = {}) {
       state,
       "RUN_RECONCILED",
       {
-        tasks: result.tasks,
+        ...taskDeltaPayload(state.tasks, result.tasks),
         runStatus: result.runStatus,
         currentWave: result.currentWave,
         repository: result.repository,
@@ -3406,7 +3477,7 @@ export function resumeRunAtDirectory(artifactDir, options = {}) {
       state,
       "RUN_RECONCILED",
       {
-        tasks: reconciled.tasks,
+        ...taskDeltaPayload(state.tasks, reconciled.tasks),
         runStatus: reconciled.runStatus,
         currentWave: reconciled.currentWave,
         repository: reconciled.repository,

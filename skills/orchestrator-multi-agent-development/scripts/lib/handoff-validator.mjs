@@ -59,6 +59,7 @@ export const HANDOFF_ROLES_BY_STAGE = Object.freeze({
     "ui-data-map",
     "seed-plan",
     "surface-benchmark",
+    "design-prototype",
   ]),
   orchestrador: Object.freeze([
     "implementation-report",

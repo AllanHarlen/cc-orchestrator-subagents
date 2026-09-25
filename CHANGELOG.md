@@ -1,6 +1,18 @@
 # Changelog
 
-## [4.24.2] — 2026-09-24 — AGY: status explicito nunca e sobrescrito por vocabulario de negocio no texto
+## [4.25.0] — 2026-09-25 — Protótipo do Open Design nas tasks de front-end, cobertura RF/RNF/ARC, parser sem crase e log de eventos compacto
+
+- **Removido:** o script determinístico `convert-design-prototype.mjs` (e a flag `--convert-design`/`--transpile-design`) que tentava transpilar HTML/CSS do protótipo do Open Design para React/Vue/etc. via regex. Não funcionava (fallback fora do React quebrava com `ReferenceError: htmlContent is not defined`, o HTML real do Open Design não compilava como TSX em vários casos, `<head>`/`<script>` eram descartados, e o resultado nunca era commitado antes da criação das worktrees da Fase 5, então `INTEGRATION_ROOT_DIRTY` bloqueava a integração) — era trabalho não comitado, nunca chegou a rodar num projeto real.
+- **Abordagem:** o Open Design só gera HTML/CSS/JS; a stack real do projeto (React, Vue, Angular, Blazor, …) é a definida pelo PRD. Em vez de um script convertendo mecanicamente, o Orquestrador passa o caminho do `design-prototype` (quando o handoff do Pensador o traz — obrigatório sempre que o Open Design foi usado, ver `cc-pensador` 2.38.0) no prompt de toda task front-end da Fase 5, junto com `design-system-files`/`tokens.css`, delegando ao AGY a reprodução da hierarquia visual e dos estados de interação do protótipo nos componentes idiomáticos da stack real. `references/workflow.md` (secção 4.0b) e `SKILL.md` documentam essa referência em vez do script removido.
+- **Gate de fidelidade (Fase 9):** o `visualAudit` passa a comparar as telas implementadas também contra o protótipo (quando existir), como evidência adicional de layout/hierarquia — não como diff mecânico de arquivos.
+
+### Auditoria da run OficinaAI (2026-09)
+
+- **Parser da Fase 2 aceita campos sem crase:** `contractIds: CT-01`, `allowedPaths: backend/**`, `expectedFiles: a, b` e `validationPlan: x; y` eram descartados em silêncio quando escritos sem crase — as 13 tasks da run chegaram ao `state.json` sem contrato, escopo, arquivos esperados nem plano de validação, desligando a validação de escopo e o planner de worktree. Crase continua tendo precedência; `validationPlan` sem crase separa por `;` (vírgula é comum dentro de um item).
+- **Log de eventos compacto:** `STALL_SWEEP_COMPLETED` e `RUN_RECONCILED` gravam só as tasks alteradas (`changedTasks`) em vez do mapa inteiro; o `events.jsonl` da run tinha 10 MB (418 de 499 eventos eram varreduras, 190 sem mudança nenhuma). Eventos antigos com `tasks` completo continuam sendo reaplicados; o replay do log compacto reproduz o snapshot.
+- **Cobertura RF/RNF/ARC:** `requirements-coverage.mjs` soma `requirements`, `nonFunctionalRequirements` e `architecturePatterns` do `requirements.json` (cc-pensador 2.38.0) e o parser reconhece `RNF-XX`/`ARC-XX` em `requirementIds`. `SKILL.md` e o template `assets/requirements-evidence.template.json` mostram como registrar evidência para um RNF/ARC (entrada `requirementId: "RNF-01"` com critério próprio — não há `CA-XX` vinculado).
+- **`components.css`:** `subagent-prompts.md` manda importar o `components.css` do pacote depois de `tokens.css` (nunca `preview.css` nem as classes de andaime de `components.html`) e o gate de design da review confere as classes de componente no CSS **compilado** do build.
+- **Testes:** `tests/orchestration-state.test.mjs` (delta de eventos com replay; campos sem crase) e `tests/requirements-coverage.test.mjs`.
 
 - **Causa:** `executor-adapters.mjs::normalizeStatus` deixava a varredura de texto livre
   (`reason`/`error`/`summary`, e o `error` de um envelope stream-json) sobrescrever

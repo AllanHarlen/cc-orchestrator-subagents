@@ -67,7 +67,7 @@ function readHandoffSafe(path) {
  * Factored out of inspectVisualHandoff() so inspectDataContractArtifacts()
  * (ui-data-map/seed-plan/surface-benchmark) resolves paths identically.
  */
-function buildArtifactRootResolver(handoff, handoffPath) {
+export function buildArtifactRootResolver(handoff, handoffPath) {
   const handoffDir = dirname(handoffPath);
   const declaredRoot = String(handoff.artifactRoot ?? "").replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/$/, "");
   const declaredSegments = declaredRoot.split("/").filter(Boolean);
@@ -195,6 +195,17 @@ function verifyResolvedDesignIntegrity(artifact, packageRoot) {
   }
   if (typeof artifact.contractSha256 === "string" && artifact.contractSha256 !== actual) {
     findings.push({ severity: "critical", code: "CONTRACT_HASH_MISMATCH", path: artifact.path, source: "handoff", expected: artifact.contractSha256, actual });
+  }
+  // cc-pensador >= 2.38.0 records the reviewer's verdict (design-review.json) bound to the contract;
+  // the handoff's own validation.status is not trusted, the file on disk is. Older producers do not
+  // declare it: informative only, so a pre-2.38 handoff still materializes.
+  if (artifact.validation?.review) {
+    const review = readJson(artifact.validation.review);
+    if (review.missing || review.invalid) findings.push({ severity: "high", code: "DESIGN_REVIEW_MISSING", path: `${artifact.path}/${artifact.validation.review}` });
+    else if (review.value?.contractSha256 !== actual) findings.push({ severity: "high", code: "DESIGN_REVIEW_STALE", path: artifact.path, reviewed: review.value?.contractSha256 ?? null, actual });
+    else if (review.value?.verdict !== "PASS") findings.push({ severity: "high", code: "DESIGN_REVIEW_NOT_PASS", path: artifact.path, verdict: review.value?.verdict ?? null });
+  } else {
+    findings.push({ severity: "warning", code: "DESIGN_REVIEW_NOT_DECLARED", path: artifact.path, message: "Producer predates cc-pensador 2.38.0: no recorded design review for this contract" });
   }
   return findings;
 }

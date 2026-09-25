@@ -39,6 +39,7 @@ import {
   openKnowledgeStore,
   projectKnowledgePaths,
 } from "../skills/orchestrator-multi-agent-development/scripts/lib/project-knowledge.mjs";
+import { approveReview, waiveApiContract } from "./helpers/review-report.mjs";
 
 const roots = [];
 
@@ -71,6 +72,8 @@ function fixture() {
   sweepStalledTasks(artifactDir, { projectRoot: root });
   updateCompletionGate(artifactDir, "monitoring", "DONE", { projectRoot: root, evidence: ["manual"] });
   updatePhase(artifactDir, 6, "DONE", { projectRoot: root, evidence: "test:6:DONE" });
+  approveReview(artifactDir, "backendReview");
+  waiveApiContract(artifactDir, root);
   updateCompletionGate(artifactDir, "backendReview", "DONE", { projectRoot: root, evidence: ["manual"] });
   for (const phase of [7, 8, 9, 9.5]) {
     updatePhase(artifactDir, phase, "DONE", { projectRoot: root, evidence: `test:${phase}:DONE` });

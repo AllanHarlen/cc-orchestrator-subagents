@@ -35,6 +35,7 @@ import {
   verifyRun,
 } from "../skills/orchestrator-multi-agent-development/scripts/lib/orchestration-state.mjs";
 import { writeProjectConfig } from "../skills/orchestrator-multi-agent-development/scripts/lib/project-config.mjs";
+import { approveReview, waiveApiContract } from "./helpers/review-report.mjs";
 
 const temporaryRoots = [];
 
@@ -119,6 +120,10 @@ function completeRun(root, artifactDir) {
   ]) {
     writeFileSync(join(artifactDir, name), name === "handoff.json" ? VALID_HANDOFF : `# ${name}\n`, "utf8");
   }
+  // Review gates close only on an approving decision written after the reviewed tasks finished.
+  approveReview(artifactDir, "backendReview");
+  approveReview(artifactDir, "frontendReview");
+  waiveApiContract(artifactDir, root);
   writeFileSync(join(artifactDir, "desktop.png"), "desktop", "utf8");
   writeFileSync(join(artifactDir, "mobile.png"), "mobile", "utf8");
   writeFileSync(join(artifactDir, "ui-evidence.json"), JSON.stringify({
@@ -871,9 +876,12 @@ test("resume follows the explicit phase sequence after browser E2E", () => {
   sweepStalledTasks(artifactDir, { projectRoot: root });
   updateCompletionGate(artifactDir, "monitoring", "DONE", { projectRoot: root, evidence: ["manual"] });
   updatePhase(artifactDir, 6, "DONE", { projectRoot: root, evidence: "test:6:DONE" });
+  approveReview(artifactDir, "backendReview");
+  waiveApiContract(artifactDir, root);
   updateCompletionGate(artifactDir, "backendReview", "DONE", { projectRoot: root, evidence: ["manual"] });
   updatePhase(artifactDir, 7, "DONE", { projectRoot: root, evidence: "test:7:DONE" });
   updatePhase(artifactDir, 8, "DONE", { projectRoot: root, evidence: "test:8:DONE" });
+  approveReview(artifactDir, "frontendReview");
   updateCompletionGate(artifactDir, "frontendReview", "DONE", { projectRoot: root, evidence: ["manual"] });
   writeFileSync(join(artifactDir, "desktop.png"), "fake-png", "utf8");
   writeFileSync(join(artifactDir, "mobile.png"), "fake-png", "utf8");

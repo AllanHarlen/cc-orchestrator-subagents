@@ -184,7 +184,7 @@ Para cada task extraida do PRD/spec, registre em `.orchestrator/runs/<nome>/plan
 Depois de escrever `plan/tasks-classification.md`, rode o gate de cobertura RF/CA (quando houver `requirements-index` no upstream) **antes** de montar as ondas — pegar um `RF` sem task aqui e mais barato do que descobrir na Fase 7:
 
 ```bash
-node "${CLAUDE_SKILL_DIR}/scripts/validate-requirements-coverage.mjs"   --requirements ".pensador/<slug>-vN/requirements.json"   --tasks ".orchestrator/runs/<nome>/plan/tasks-classification.md"
+node "${CLAUDE_SKILL_DIR}/scripts/validate-requirements-coverage.mjs"   --requirements ".pensador/<slug>-vN/requirements.json"   --tasks ".orchestrator/runs/<nome>/plan/tasks-classification.md"   --dir ".orchestrator/runs/<nome>"
 ```
 
 ### Regra de roteamento por categoria
@@ -290,7 +290,8 @@ node "${CLAUDE_SKILL_DIR}/scripts/materialize-visual-handoff.mjs" --root "." --h
 - O script confere o pacote **mecanicamente** antes de copiar, sem confiar no `validation.status` do handoff: recalcula o `contractSha256` do `design-contract.json` (mesma serializacao canonica do Pensador: chaves ordenadas, `sha256` excluido) e o compara com o proprio contrato, com o `design-audit.json` e com o `contractSha256` do handoff (`CONTRACT_HASH_MISMATCH`, critico; `CONTRACT_HASH_MISSING`), e exige `design-audit.json` com `status: "PASS"` (`DESIGN_AUDIT_MISSING`/`DESIGN_AUDIT_NOT_PASS`). Ele copia apenas o pacote `resolved/` autoritativo de cada `<id>` para o alvo real (`materializeInto`, ex.: `packages/ui/design-systems/<id>/`, ou `src/styles/…` em app unico — ver `references/handoff-contract.md` secao 6) e materializa cada asset. Ele propaga os `seedBindings` no relatorio de operacoes; para cada asset com `purpose: "seed-demo"`, o Orquestrador deve inclui-los na task de seed correspondente, aplicar cada vinculo no codigo/dado real e confirmar o resultado no browser. Assets estaticos podem ter `seedBindings: []`. Nao reescreva `tokens.css`, `DESIGN.md`, `components.html` nem `preview/`: eles sao consumidos verbatim.
 - Um `status: "BLOCKED"` no JSON gravado significa finding alto/critico no pacote (`resolved/` ausente, asset obrigatorio faltando, hash divergente, ou um handoff `status: DONE` com `design-system-files.variant: "legacy-verbatim"` — desde cc-pensador >= 2.25.0 isso e sempre um producer desatualizado, nunca uma saida valida do proprio Pensador) — corrija na origem (Pensador) antes de prosseguir; nao contorne despachando mesmo assim.
 - Feche o gate somente apos `status: "PASS"`: `gate --gate visualMaterialization --status DONE --evidence file:design-materialization.json`. **O dispatch de qualquer task front-end (Fase 5) fica bloqueado** (`assertPhaseTransition`) enquanto este gate nao fechar — isso e deliberado: um pacote de design nao materializado so aparecia antes como sintoma indireto e generico no gate visualAudit da Fase 9 (imagens quebradas/ausentes), sem apontar a causa raiz.
-- Guarde os caminhos materializados para carregar no prompt de **toda task front-end** (Fase 5) e para o gate de design da Fase 9.
+- O script copia para `materializeInto` **so os arquivos de produto** (`design-contract.json`, `tokens.css`, `components.css`, `tailwind-v4.css`, `design-tokens.json`, `DESIGN.md`, `USAGE.md`, `manifest.json`, `components.manifest.json`, `assets/manifest.json`). `components.html`, `preview/`, `provenance.json`, `design-audit.json` e `design-review.json` ficam no pacote do Pensador, cujo caminho sai como `referenceRoot` na operacao `design-package` — uma run real tinha HTML de preview dentro de `frontend/src/styles` e o `.grid` do preview vazando para o CSS do produto. O Orquestrador tambem confere o `design-review.json` do pacote (`DESIGN_REVIEW_MISSING`/`_STALE`/`_NOT_PASS`) quando o produtor o declara.
+- Guarde os caminhos materializados (imports do produto) **e** o `referenceRoot` (referencia visual) para carregar no prompt de **toda task front-end** (Fase 5) e para o gate de design da Fase 9. O `components.css` materializado e importado no stylesheet global logo depois de `tokens.css`.
 - No modo Spec, o design chega em `design.md` + `specs/ui-design-system/spec.md`: use-os como requisito normativo do gate.
 - Quando nao ha front-end (`visualMaterialization` nao e `required`), o gate fica `N/A` automaticamente — nao ha o que materializar.
 
@@ -356,7 +357,15 @@ node "${CLAUDE_SKILL_DIR}/scripts/validate-contract-coverage.mjs" --ui-data-map 
 
 ### 4.2 Geracao deterministica de tipos e contratos
 
-A partir da especificacao OpenAPI/YAML/JSON ou dos contratos em `.orchestrator/runs/<nome>/contracts/`, gere tipos e DTOs fortemente tipados para a stack do projeto antes de despachar os subagentes:
+**Primeiro, traga o contrato maquina-legivel do Pensador para dentro do repositorio.** Codigo e build do produto nunca leem a pasta de coordenacao (`.pensador/`, `.orchestrator/`, ...): numa run real o front-end gerava os tipos com `openapi-typescript ../.pensador/<slug>/openapi.yaml`, e o produto nao compilava sem a pasta de planejamento. O `run-wave-gate.mjs` reprova qualquer referencia a essas pastas em codigo/config (`checks.coordinationRefs`).
+
+```bash
+node "${CLAUDE_SKILL_DIR}/scripts/materialize-api-contract.mjs" --handoff ".pensador/<slug>-vN/handoff.json" --into contracts --apply
+```
+
+A saida traz o destino (`contracts/openapi.yaml`, ...), o `sha256` e o comando `validate` ja executavel (`st run contracts/openapi.yaml --url <base-url>`, usado na Fase 8.0). Gere tipos, mocks e a validacao de CI a partir dessa copia.
+
+A partir da especificacao OpenAPI/YAML/JSON materializada ou dos contratos em `.orchestrator/runs/<nome>/contracts/`, gere tipos e DTOs fortemente tipados para a stack do projeto antes de despachar os subagentes:
 
 ```bash
 node "${CLAUDE_SKILL_DIR}/scripts/generate-contract-types.mjs" \
@@ -382,6 +391,8 @@ node "${CLAUDE_SKILL_DIR}/scripts/orchestration-state.mjs" gate \
 O resultado fica em `evidence/infra-smoke-test.json`, identificado por `kind: "infra-smoke-test"` e `schemaVersion: 1`. Depois do `up`, o script le todos os containers por JSON estruturado, reprova servico parado ou com health negativo e, quando `--health-url` for informado, exige resposta HTTP 2xx dentro do timeout. `SKIPPED`, `FAILED`, evidencia sem esse envelope e `--dry-run` nao fecham o gate: a evidencia precisa ser aplicavel, vir de uma subida real e ter `status: "PASS"`. Isso confirma cedo imagens Docker, Dockerfiles, portas, credenciais, volumes, banco, filas e dependencias essenciais; falha aqui bloqueia a Fase 4 antes de qualquer dispatch.
 
 ## Fase 5 - Delegacao paralela
+
+**A Fase 5 so abre (e nenhuma task e despachada) com as Fases 1 a 4 fechadas** (`DONE` ou `N/A`): `updatePhase(5, RUNNING)` recusa com `PHASE_PREREQUISITES_OPEN` e `updateTaskStatus(..., RUNNING)` com `TASK_DISPATCH_BEFORE_PHASE_4` assim que a run registrou fases alem da 1. Uma run real fechou a Fase 4 (contratos, materializacao, smoke test) 26 horas depois de a delegacao ter comecado.
 
 Antes de lancar subagentes, confirme que `validate-routing.mjs` passou e que o plano de worktrees da wave nao possui overlap sendo despachado em paralelo. A delegacao precisa seguir `assignedAgent` dos artefatos validados.
 
@@ -484,7 +495,7 @@ muito grande costuma indicar escopo mal recortado, contexto redundante ou uma li
 deveria ter ido por `scripts/intelligence` em vez de colada inteira no prompt.
 
 **Pacote de design system: use `--design-system`, nao `--priority-files`.** Quando a task tem
-contrato visual (Fase 4.0), passe `--design-system "<materializeInto>"` ao bridge em vez de colar
+contrato visual (Fase 4.0), passe `--design-system "<referenceRoot>"` (o `resolved/` do Pensador, caminho absoluto, reportado pela materializacao — traz `components.html` e `preview/`, que nao vao para a arvore do produto) ao bridge em vez de colar
 `tokens.css`/`components.html`/`DESIGN.md` manualmente no corpo do prompt ou for
 ca-los via `--priority-files`: o bridge inclui os arquivos centrais do pacote na integra,
 fora do orcamento de `--max-files`/`--max-file-bytes` e do transporte por argv, e lista o resto do
@@ -598,8 +609,10 @@ O manager continuo (`watch`, ja iniciado obrigatoriamente na Fase 5 — ver "O w
 node "${CLAUDE_SKILL_DIR}/scripts/orchestration-lifecycle.mjs" watch \
   --dir ".orchestrator/runs/<nome>" \
   --adapter-config ".orchestrator/executor-control.json" \
-  --interval-seconds 30
+  --interval-seconds 30 --max-interval-seconds 120
 ```
+
+Um tick sem mudanca (nenhuma task mudou, nada a reconciliar) **nao grava evento** — o sweep persiste um heartbeat no maximo a cada 5 min (`lifecycle.lastSweepAt` continua provando que o monitoramento rodou) — e o intervalo dobra ate `--max-interval-seconds`; qualquer mudanca volta ao intervalo base. O tick nao refaz o replay completo do log de eventos (o `reconcile`/`resume` explicitos continuam verificando). Medido numa run real: 418 de 499 eventos eram sweep/reconcile (190 sem mudanca nenhuma), num log de 10 MB relido inteiro a cada poll. `--persist-every-tick` restaura o comportamento antigo para diagnostico.
 
 O adapter recebe apenas placeholders allowlisted e roda sem shell. Cada probe bruto redigido e limitado e salvo em `run/executor-results/` antes de atualizar task, heartbeat, lease, history e telemetry. Para AGY, preserve `conversationId`, modelo resolvido, `usage`, duracao, turnos e a diretiva de retry validada. `interrupt`, `retry` e `cancel` exigem adapter ou `--external-confirmed`; nunca simule sucesso da acao externa. Retry confirmado usa exatamente `--conversation <id>` quando houver ID e `--continue` apenas quando nao houver. Veja `lifecycle-telemetry.md` e `assets/executor-control-config.schema.json`.
 
@@ -681,7 +694,11 @@ Ao final de cada wave (antes de autorizar a transicao para a wave seguinte), exe
 node "${CLAUDE_SKILL_DIR}/scripts/run-wave-gate.mjs" --wave <N> --dir ".orchestrator/runs/<nome>"
 ```
 
-O script roda localmente compilacao (`build`), typecheck e verificacao de escopo alterado (`git diff`), sem consumir tokens de LLM.
+O script roda localmente, sem consumir tokens de LLM:
+
+- **`build`/`test` por workspace:** detecta cada unidade compilavel ate profundidade 2 — pacote Node (scripts `build`/`test`, com o gerenciador do lockfile e `CI=true`), solucao .NET (`dotnet build`/`dotnet test`, este so quando existe projeto de teste), Go, Rust, Python — e roda cada uma no proprio diretorio. Monorepo `backend/` (.NET) + `frontend/` (Next) vira duas execucoes; o gate antigo dava `SKIPPED` ("generic stack") nesse layout e `PASS` para qualquer `package.json` na raiz **sem rodar nada**. Sem workspace detectado, `SKIPPED` explicito com `reasonCode`; `--build-cmd`/`--test-cmd` continuam sobrescrevendo. `checks.test.untestedWorkspaces` lista workspace com build e sem teste (informativo; a exigencia vem dos `ARC-XX` da Fase 10).
+- **`format`:** reprova linha acima de `--max-line-length` (padrao 200) nos arquivos de codigo alterados (codigo gerado, migrations, URLs, imports e comentarios isentos) — numa run real um terco das linhas dos endpoints passava de 200 caracteres, handlers inteiros numa linha so. Onde a stack tem formatador, verifica so os arquivos alterados: `dotnet format <sln> whitespace --verify-no-changes --include ...` e, com Prettier configurado, `prettier --check`.
+- **`coordinationRefs`:** reprova codigo/config (arquivos alterados + todo `package.json` de workspace) que referencie `.pensador/`, `.orchestrator/`, `.orchestration/`, `.testador/` ou `.executor/`.
 
 O gate de design tokens (`checks.designTokens`) roda quando se passa `--tokens-css <materializeInto>/tokens.css` (passe sempre que houver design system): ele lista os arquivos front-end alterados (`git diff --name-only HEAD` + nao rastreados, ou `--changed-files a,b,c`) e **reprova** (`status: FAILED`, onda nao avanca) hex literal (inclusive fallback `var(--x, #fff)`), px de espacamento/raio fora de `var(...)` (0 e 1px sao aceitos), `style={{}}` inline com espacamento/raio literal e `var(--x)` sem definicao no `tokens.css` nem no proprio arquivo. O pacote de design (`tokens.css`, `components.html`, `preview/`, `design-systems/`) nunca e linta. Sem `--tokens-css`, ou sem como listar os arquivos alterados, o resultado e um `SKIPPED` explicito (nunca `PASS`). Guarde a saida `--json` da ultima onda: ela e a evidencia mecanica `designEvidence.tokenLint` da Fase 9. Nenhuma wave avancara se a wave anterior tiver deixado erros de build ou tipagem acumulados.
 
@@ -732,10 +749,10 @@ O resultado gerado e inserido na secao 13. Um `RF` sem entrega correspondente (o
 **Gate deterministico de cobertura RF/CA.** A matriz acima e prosa, montada pelo mesmo agente que escreveu o codigo — sozinha, ela nao pega um `RF` que a Fase 1.2 perdeu ao extrair tasks. Quando o handoff do Pensador trouxe `requirements-index` (role `requirements-index`, `requirements.json`, modo PRD), rode o gate deterministico antes de fechar esta fase:
 
 ```bash
-node "${CLAUDE_SKILL_DIR}/scripts/validate-requirements-coverage.mjs"   --requirements ".pensador/<slug>-vN/requirements.json"   --tasks ".orchestrator/runs/<nome>/plan/tasks-classification.md"
+node "${CLAUDE_SKILL_DIR}/scripts/validate-requirements-coverage.mjs"   --requirements ".pensador/<slug>-vN/requirements.json"   --tasks ".orchestrator/runs/<nome>/plan/tasks-classification.md"   --dir ".orchestrator/runs/<nome>"
 ```
 
-Ele confere que todo `RF` do `requirements.json` esta reivindicado pelo campo `requirementIds` de pelo menos uma task (Fase 2). Sem `requirements-index` no upstream (modo Spec, ou handoff de versao anterior a esse role), o gate degrada para `applicable: false` e nao bloqueia — a cobertura fica so com a matriz de prosa nesse caso, e isso deve ser registrado em `report/workflow-log.md` como limitacao. `REQUIREMENTS_NOT_COVERED` (exit 1) e um achado de lacuna real: volte a Fase 1.2/2 e adicione a task que falta, nunca ignore o `RF` silenciosamente.
+Ele confere que todo `RF`, `RNF` e `ARC` do `requirements.json` esta reivindicado pelo campo `requirementIds` de pelo menos uma task (Fase 2). Com `--dir`, grava o snapshot `plan/requirements-index.json`: e contra ele (e nao so contra os ids que as tasks reivindicaram) que o gate `requirementsCoverage` da Fase 10 confere o `review/requirements-evidence.json` — toda id do indice, todo `CA-XX` vinculado a cada `RF` e evidencia `kind: "test"` para `RNF` de seguranca/privacidade/isolamento por tenant/conformidade. Sem `requirements-index` no upstream (modo Spec, ou handoff de versao anterior a esse role), o gate degrada para `applicable: false` e nao bloqueia — a cobertura fica so com a matriz de prosa nesse caso, e isso deve ser registrado em `report/workflow-log.md` como limitacao. `REQUIREMENTS_NOT_COVERED` (exit 1) e um achado de lacuna real: volte a Fase 1.2/2 e adicione a task que falta, nunca ignore o `RF` silenciosamente.
 
 Se precisar ajuste, delegue para Codex com `--effort medium` (back-end) ou AGY (front-end), conforme a categoria.
 
@@ -744,6 +761,16 @@ Se precisar ajuste, delegue para Codex com `--effort medium` (back-end) ou AGY (
 > **Ignorar quando nao houver back-end:** Se nao houver nenhuma task `BACKEND_ONLY`, `DATABASE_ONLY` nem fatia back-end de `FULLSTACK`, pule a Fase 8 e registre `review/review-final.md` com a nota `"Sem back-end: review back-end nao aplicavel"`.
 
 Objetivo da fase: validar a implementacao **back-end** final contra a especificacao, os contratos, as tasks executadas e os retornos dos subagentes. Esta fase e read-only: nao edite codigo durante o review. Codex revisa **apenas back-end** — nunca front-end. Se houver defeitos, volte para a Fase 7 para integrar ajustes ou redelegar correcao.
+
+### 8.0 Contrato de API contra a API em execucao — gate `apiContractValidation`
+
+Com a stack no ar (mesmo procedimento do smoke test da Fase 4.3), valide a API real contra a copia do contrato materializada na Fase 4.2 **antes** do review:
+
+```bash
+node "${CLAUDE_SKILL_DIR}/scripts/validate-api-contract.mjs" --contract contracts/openapi.yaml --base-url http://127.0.0.1:<porta> --dir ".orchestrator/runs/<nome>"
+```
+
+Usa Schemathesis (`st run <contrato> --url <base>`, todos os checks: status code, schema de resposta, content-type, headers; `uvx schemathesis` quando `st` nao esta no PATH; `--command "<tool> <contract> <url>"` para outra stack de contrato) e grava `evidence/api-contract-validation.json` amarrado ao `sha256` do contrato. `gate --gate apiContractValidation --status DONE` so fecha com esse arquivo `PASS`, nao dry-run e com o contrato inalterado (`API_CONTRACT_VALIDATION_MISSING`/`_BLOCKED`/`_STALE`). Numa run real o handoff declarava `schemathesis run openapi.yaml` (sem `--url`, nunca executavel) e nada rodou: um 422 onde o contrato dizia 409 e um codigo de erro renomeado so apareceram no review humano. Falha de check e achado da Fase 8 (volta para a Fase 7). O gate so aceita `N/A` com motivo iniciado por `NO_HTTP_API` (back-end sem endpoints HTTP) ou `NO_MACHINE_READABLE_CONTRACT`, e nunca torna a Fase 8 inteira dispensavel.
 
 ### 8.1 Preparar pacote de review
 
@@ -787,6 +814,8 @@ O prompt do review back-end deve pedir verificacao explicita de:
 - `APROVADO`: pode seguir para a Fase 9;
 - `APROVADO_COM_RESSALVAS`: pode seguir somente se as ressalvas forem documentadas como nao bloqueantes;
 - `REPROVADO`: nao avance; volte para a Fase 7 ou redelegue ajustes ao Codex.
+
+**O gate `backendReview` le essa decisao.** `gate --gate backendReview --status DONE` exige `review/review-final.md` cuja **ultima** palavra de decisao seja `APROVADO` ou `APROVADO_COM_RESSALVAS` (`REVIEW_REPROVED`, `REVIEW_VERDICT_MISSING`) e escrito **depois** de toda task de back-end concluida (`REVIEW_STALE`): depois do loop de correcao, o codigo corrigido e revisado de novo. Numa run real o review reprovou, as correcoes (escalada de privilegio para SuperAdmin, reuso de refresh token) foram aplicadas e ninguem as revisou. O mesmo vale para `frontendReview`/`review-frontend.md` (9.4), e e reconferido no fechamento das fases e no audit final.
 
 **`REPROVADO` obrigatorio quando:** um `RF`/`CA` do escopo back-end nao tem evidencia na matriz de rastreabilidade (secao 13 do `report/implementation-report.md`), ou o caminho de codigo desse requisito contem `// TODO`, `NotImplementedException`, stub vazio ou placeholder equivalente. Isso vale mesmo que o build passe e nenhum outro achado de severidade tenha sido levantado — requisito nao implementado nao e "ressalva nao bloqueante", e reprovacao.
 

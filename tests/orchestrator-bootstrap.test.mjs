@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
@@ -109,6 +109,14 @@ test("materializer copies only the authoritative resolved package and its declar
   assert.equal(readFileSync(join(root, "apps/web/public/assets/service.webp"), "utf8"), "image-content");
   assert.equal(readFileSync(join(root, "apps/web/public/assets/hero.webp"), "utf8"), "image-content");
   assert.equal(readFileSync(join(root, "apps/web/styles/design-systems/agentic/tokens.css"), "utf8"), ":root{}\n");
+  // Only product files reach the code tree; the visual reference and the audit trail stay in the
+  // Pensador package, reported as referenceRoot (a real app had preview HTML inside src/styles).
+  for (const reference of ["preview/index.html", "components.html", "provenance.json", "assets/generated/hero.webp"]) {
+    assert.equal(existsSync(join(root, "apps/web/styles/design-systems/agentic", reference)), false, reference);
+  }
+  const packageOperation = applied.operations.find((operation) => operation.type === "design-package");
+  assert.ok(packageOperation.referenceRoot.endsWith(join("design-systems", "agentic", "resolved")));
+  assert.ok(packageOperation.files.includes("tokens.css"));
   const assetOperation = applied.operations.find((operation) => operation.type === "asset" && operation.id === "service");
   assert.deepEqual(assetOperation.seedBindings, ["ServicoFixo:Alinhamento"]);
   assert.equal(assetOperation.destination, join(root, "apps/web/public/assets/service.webp"));

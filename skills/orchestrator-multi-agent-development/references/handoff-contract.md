@@ -217,7 +217,7 @@ Quando o Pensador tem front-end, o design system e **derivado** do brief pelo br
 - `design-contract.json` e a fonte unica; todo o resto do `resolved/` e renderizado dele. O **front matter YAML do `DESIGN.md` e normativo**; a prosa e justificativa e nao prevalece sobre tokens.
 - O pacote sempre traz os temas `light` e `dark`, derivados do mesmo seed (`compact` e opcional).
 - Ordem de precedencia para o consumidor: `design-contract.json`/`tokens.css` > `components.html` > prosa do `DESIGN.md`.
-- `components.css` e a **unica** folha de componentes importavel do pacote (regras de `.btn`, `.input`, `.card`, `.badge`, `.alert`, `.modal` e seus estados): o consumidor a importa no stylesheet global logo depois de `tokens.css`. `components.html` e `preview/` sao referencia visual — suas classes de andaime (`.page`, `.scope`, `.grid`, `.state`) nunca entram no produto. Componentes do contrato sem regra dedicada estao listados no `USAGE.md` e sao construidos a partir dos tokens.
+- `components.css` e a **unica** folha de componentes importavel do pacote (regras de produto de cada tipo de componente — botao, campos, select, checkbox/switch, card, tabela, abas, toast, sidebar/topnav, stepper, estado vazio, skeleton, entre outros — e seus estados; o cabecalho do arquivo lista as classes): o consumidor a importa no stylesheet global logo depois de `tokens.css`. `components.html` e `preview/` sao referencia visual — suas classes de andaime (`.page`, `.scope`, `.grid`, `.state`) nunca entram no produto. Componentes do contrato sem regra dedicada estao listados no `USAGE.md` e sao construidos a partir dos tokens.
 
 ### Entrada `design-system-files` no handoff
 
@@ -234,11 +234,11 @@ Quando o Pensador tem front-end, o design system e **derivado** do brief pelo br
   "contractSha256": "<sha256 hex do design-contract.json>",
   "themes": ["light", "dark"],
   "designBriefPath": "design-brief.json",
-  "validation": { "status": "PASS", "audit": "design-audit.json" }
+  "validation": { "status": "PASS", "audit": "design-audit.json", "review": "design-review.json", "auditStatus": "PASS", "reviewStatus": "PASS" }
 }
 ```
 
-- `contractSha256` e o `sha256` do contrato; `null` enquanto o audit nao o gravou. `validation.status` reflete o `design-audit.json` real (`UNVERIFIED` sem evidencia — nunca `PASS` presumido).
+- `contractSha256` e o `sha256` do contrato; `null` enquanto o audit nao o gravou. `validation.status` so e `PASS` quando o `design-audit.json` real **e** a review registrada em `design-review.json` (Codex, read-only) sao `PASS` para o mesmo `contractSha256`; `UNVERIFIED` sem audit, `UNREVIEWED` sem review do contrato atual, `FAIL` com review reprovada — nunca `PASS` presumido. O consumidor confere `design-review.json` em disco, como faz com o audit.
 - `themes` lista os temas presentes (sempre inclui `light` e `dark`). `designBriefPath` e relativo ao `artifactRoot`.
 - `materializeInto` e sempre `<uiPackageDir>/design-systems/<id>/`.
 

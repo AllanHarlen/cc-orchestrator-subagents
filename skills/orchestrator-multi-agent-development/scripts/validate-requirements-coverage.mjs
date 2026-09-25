@@ -18,11 +18,31 @@
  * `applicable: true` and at least one requirement has zero task coverage
  * (`ok: false`, non-empty `uncoveredRequirementIds`).
  */
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 
+import { artifactWritePath } from "./lib/artifact-layout.mjs";
 import { executeJsonCli, readJsonFile, required } from "./lib/cli-utils.mjs";
 import { computeRequirementsCoverage } from "./lib/requirements-coverage.mjs";
+
+/**
+ * `--dir <run>` snapshots the index into plan/requirements-index.json. The Fase 10 evidence audit
+ * (orchestration-state.mjs) then checks requirements-evidence.json against the Pensador's own ids
+ * and CA links, not only against whatever ids the tasks happened to claim.
+ */
+function snapshotIndex(runDir, index) {
+  const target = artifactWritePath(resolve(runDir), "requirements-index.json");
+  mkdirSync(dirname(target.path), { recursive: true });
+  const pick = (key) => (Array.isArray(index?.[key]) ? index[key] : []);
+  writeFileSync(target.path, `${JSON.stringify({
+    schemaVersion: 1,
+    requirements: pick("requirements"),
+    acceptanceCriteria: pick("acceptanceCriteria"),
+    nonFunctionalRequirements: pick("nonFunctionalRequirements"),
+    architecturePatterns: pick("architecturePatterns"),
+  }, null, 2)}\n`, "utf8");
+  return target.relativePath;
+}
 
 function main(argv) {
   const args = {};
@@ -48,6 +68,9 @@ function main(argv) {
 
   const tasksMarkdown = readFileSync(resolve(tasksPath), "utf8");
   const coverage = computeRequirementsCoverage(requirementsIndex, tasksMarkdown);
+  if (typeof args.dir === "string" && requirementsIndex) {
+    coverage.indexSnapshot = snapshotIndex(args.dir, requirementsIndex);
+  }
 
   if (coverage.applicable && !coverage.complete) {
     const error = new Error(

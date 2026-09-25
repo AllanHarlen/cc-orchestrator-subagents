@@ -72,6 +72,7 @@ const LAYOUT_ROOT_FILES = Object.freeze(["state.json", "events.jsonl", ".state.l
 const LAYOUT_V2_FILE_DIRECTORIES = Object.freeze({
   "tasks-classification.md": "plan",
   "waves.md": "plan",
+  "requirements-index.json": "plan",
   "monitoring.md": "run",
   "lifecycle-probe.json": "run",
   "reconciliation-probe.json": "run",
@@ -82,6 +83,7 @@ const LAYOUT_V2_FILE_DIRECTORIES = Object.freeze({
   "e2e-verification.md": "review",
   "requirements-evidence.json": "review",
   "infra-smoke-test.json": "evidence",
+  "api-contract-validation.json": "evidence",
   "implementation-report.md": "report",
   "workflow-log.md": "report",
   "subagents-context.md": "report",

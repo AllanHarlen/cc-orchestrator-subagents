@@ -149,6 +149,17 @@ export const COMPLETION_GATE_DEFINITIONS = Object.freeze({
   contractsInspected: { phase: 4, label: "Contract completeness inspection" },
   infraSmokeTest: { phase: 4, label: "Docker/infra early smoke test" },
   monitoring: { phase: 6, label: "Monitoring telemetry" },
+  // Audit finding (OficinaAI, 2026-09): the handoff declared prism/schemathesis and nothing ever ran
+  // them; 422-vs-409 and error-code divergences only surfaced in the human review. Waivable only with a
+  // reason (no machine-readable HTTP contract, e.g. a worker-only back-end).
+  apiContractValidation: {
+    phase: 8,
+    label: "API contract conformance (running API)",
+    waivable: true,
+    // N/A only for a closed set of reasons, which then mean "not applicable" (no PARTIAL at completion)
+    // instead of "verification skipped".
+    notApplicableReasons: ["NO_HTTP_API", "NO_MACHINE_READABLE_CONTRACT"],
+  },
   backendReview: { phase: 8, label: "Back-end review" },
   frontendReview: { phase: 9, label: "Front-end review" },
   visualAudit: { phase: 9, label: "Semantic UI/UX evidence" },
@@ -515,7 +526,7 @@ function validateCompletionGates(gates) {
     const gate = gates[gateId];
     // Legacy runs predate the semantic evidence gate. They remain readable;
     // a new run receives this gate from synchronizeCompletionGates().
-    if (!gate && ["requirementsCoverage", "contractsInspected", "infraSmokeTest"].includes(gateId)) continue;
+    if (!gate && ["requirementsCoverage", "contractsInspected", "infraSmokeTest", "apiContractValidation"].includes(gateId)) continue;
     if (!gate || !GATE_STATUS_SET.has(gate.status)) {
       throw new OrchestrationStateError(
         "INVALID_COMPLETION_GATE",
@@ -621,6 +632,29 @@ function assertRunTransition(state, nextStatus) {
 }
 
 /** True quando o `phaseHistory` registra a fase como fechada (DONE ou N/A). */
+/** Phase 5 (worktrees + delegation) is where executor work starts. */
+const DISPATCH_PHASE = 5;
+
+/**
+ * A task may only be dispatched (RUNNING) after phases 1-4 are closed, once the run tracks its phases
+ * (any phase beyond 1 recorded — initRun itself opens phase 1). Runs and fixtures that never advance
+ * the phase machine keep their behaviour.
+ */
+function assertDispatchAllowed(state, taskId, normalizedStatus) {
+  if (normalizedStatus !== "RUNNING") return;
+  const phaseHistory = state.phaseHistory ?? {};
+  if (!Object.keys(phaseHistory).some((phase) => Number(phase) > 1)) return;
+  const open = PHASE_SEQUENCE.filter((phase) => phase < DISPATCH_PHASE)
+    .filter((phase) => !isPhaseClosed(phaseHistory, phase));
+  if (open.length > 0) {
+    throw new OrchestrationStateError(
+      "TASK_DISPATCH_BEFORE_PHASE_4",
+      `Task ${taskId} cannot be dispatched while phase(s) ${open.join(", ")} are not DONE or N/A (contracts, design materialization and smoke test come first)`,
+      { taskId, blockedBy: open },
+    );
+  }
+}
+
 function isPhaseClosed(phaseHistory, phase) {
   const status = phaseHistory?.[String(phase)]?.status;
   return status === "DONE" || status === "N/A";
@@ -693,6 +727,22 @@ function assertPhaseTransition(state, numericPhase, normalizedStatus) {
     }
   }
 
+  if (normalizedStatus === "RUNNING" && numericPhase >= DISPATCH_PHASE) {
+    // Delegation and everything after it start only once planning, routing and the phase-4
+    // contracts/design materialization are closed. Audit finding: a real run (OficinaAI, 2026-09)
+    // closed phase 4 twenty-six hours after phase 5 had started — only closing a phase checked
+    // its predecessors, never starting one.
+    const openPrerequisites = PHASE_SEQUENCE.filter((phase) => phase < DISPATCH_PHASE)
+      .filter((phase) => !isPhaseClosed(phaseHistory, phase));
+    if (openPrerequisites.length > 0) {
+      throw new OrchestrationStateError(
+        "PHASE_PREREQUISITES_OPEN",
+        `Phase ${numericPhase} cannot start while phase(s) ${openPrerequisites.join(", ")} are not DONE or N/A`,
+        { phase: numericPhase, blockedBy: openPrerequisites },
+      );
+    }
+  }
+
   if (normalizedStatus === "RUNNING") {
     const runningPredecessors = predecessors.filter(
       (phase) => phaseHistory?.[String(phase)]?.status === "RUNNING",
@@ -710,11 +760,17 @@ function assertPhaseTransition(state, numericPhase, normalizedStatus) {
     const waivableGates = completionGateForPhase(numericPhase).filter(
       (gateId) => COMPLETION_GATE_DEFINITIONS[gateId]?.waivable,
     );
-    if (waivableGates.length === 0) {
+    // A waivable gate never makes its whole phase skippable: phase 8 holds apiContractValidation
+    // (waivable) next to backendReview (required, not waivable) — the review must still run.
+    const requiredFixedGates = completionGateForPhase(numericPhase).filter((gateId) =>
+      !COMPLETION_GATE_DEFINITIONS[gateId]?.waivable && state.completionGates?.[gateId]?.required);
+    if (waivableGates.length === 0 || requiredFixedGates.length > 0) {
       throw new OrchestrationStateError(
         "PHASE_NOT_WAIVABLE",
-        `Phase ${numericPhase} has no waivable completion gate and cannot be marked N/A`,
-        { phase: numericPhase },
+        requiredFixedGates.length > 0
+          ? `Phase ${numericPhase} cannot be marked N/A while its non-waivable gate(s) ${requiredFixedGates.join(", ")} are required`
+          : `Phase ${numericPhase} has no waivable completion gate and cannot be marked N/A`,
+        { phase: numericPhase, requiredFixedGates },
       );
     }
   }
@@ -1743,6 +1799,7 @@ function completionGateRequirements(tasks, artifactDir = null) {
     visualMaterialization: frontend,
     contractsInspected: contractFiles(artifactDir).length > 0,
     infraSmokeTest: backend && frontend,
+    apiContractValidation: backend,
     backendReview: backend,
     frontendReview: frontend,
     visualAudit: frontend,
@@ -2139,7 +2196,7 @@ export function updatePhase(artifactDir, phase, phaseStatus, options = {}) {
       artifactDir,
     );
     if (normalizedStatus === "DONE") {
-      const invalidEvidence = currentGateEvidenceFindings(artifactDir, completionGates)
+      const invalidEvidence = currentGateEvidenceFindings(artifactDir, completionGates, state)
         .filter((finding) => COMPLETION_GATE_DEFINITIONS[finding.id]?.phase === numericPhase);
       if (invalidEvidence.length > 0) {
         throw new OrchestrationStateError(
@@ -2267,6 +2324,7 @@ const GATE_ARTIFACT_CANDIDATES = Object.freeze({
   visualAudit: [["ui-evidence.json"]],
   browserE2E: [["browser-e2e-report.md"], ["e2e-report.md"], ["e2e-verification.md"]],
   requirementsCoverage: [["requirements-evidence.json"]],
+  apiContractValidation: [["api-contract-validation.json"]],
   reports: [["workflow-log.md", "subagents-context.md", "implementation-report.md"]],
   handoff: [["handoff.json"]],
   delivery: [],
@@ -2360,14 +2418,84 @@ function validateInfraSmokeTestEvidence(artifactDir) {
   return `file:${evidence.relativePath}`;
 }
 
-function currentGateEvidenceFindings(artifactDir, completionGates) {
+/** evidence/api-contract-validation.json written by validate-api-contract.mjs (never hand-written). */
+function validateApiContractEvidence(artifactDir) {
+  const evidence = resolveArtifact(artifactDir, "api-contract-validation.json");
+  if (!evidence) {
+    throw new OrchestrationStateError("API_CONTRACT_VALIDATION_MISSING", "apiContractValidation requires evidence/api-contract-validation.json (validate-api-contract.mjs)");
+  }
+  let report;
+  try {
+    report = JSON.parse(readFileSync(evidence.path, "utf8"));
+  } catch (error) {
+    throw new OrchestrationStateError("API_CONTRACT_VALIDATION_INVALID", `Could not parse api-contract-validation.json: ${error.message}`);
+  }
+  if (report.kind !== "api-contract-validation" || report.schemaVersion !== 1 || report.status !== "PASS" || report.dryRun === true) {
+    throw new OrchestrationStateError(
+      "API_CONTRACT_VALIDATION_BLOCKED",
+      "apiContractValidation requires a schemaVersion 1, non-dry-run validate-api-contract.mjs result with status PASS",
+      { status: report.status ?? null, reasonCode: report.reasonCode ?? null },
+    );
+  }
+  if (report.contractAbsolutePath && existsSync(report.contractAbsolutePath)
+    && fileSha256(report.contractAbsolutePath) !== report.contractSha256) {
+    throw new OrchestrationStateError("API_CONTRACT_VALIDATION_STALE", "The API contract changed after it was validated; run validate-api-contract.mjs again");
+  }
+  return `file:${evidence.relativePath}`;
+}
+
+const REVIEW_GATE_SOURCES = Object.freeze({
+  backendReview: { artifact: "review-final.md", categories: new Set(["BACKEND_ONLY", "DATABASE_ONLY", "FULLSTACK"]) },
+  frontendReview: { artifact: "review-frontend.md", categories: new Set(["FRONTEND_ONLY", "FULLSTACK"]) },
+});
+
+/** Final decision of a review report (references/workflow.md 8.4/9.4): the LAST verdict word wins. */
+export function reviewVerdict(text) {
+  const matches = [...String(text ?? "").matchAll(/\b(APROVADO_COM_RESSALVAS|APROVADO|REPROVADO)\b/g)];
+  return matches.length ? matches.at(-1)[1] : null;
+}
+
+/**
+ * A review gate closes DONE only on an approving verdict that is newer than every task of its scope.
+ * Audit finding: a real run (OficinaAI, 2026-09) got REPROVADO in Fase 8, fixed privilege escalation
+ * and refresh-token reuse in the correction loop, and nobody reviewed the fixes — the gate only
+ * checked that review-final.md existed.
+ */
+function validateReviewGateEvidence(artifactDir, state, gateId) {
+  const source = REVIEW_GATE_SOURCES[gateId];
+  const resolved = resolveArtifact(artifactDir, source.artifact);
+  if (!resolved) throw new OrchestrationStateError("REVIEW_REPORT_MISSING", `${gateId} requires ${source.artifact}`);
+  const verdict = reviewVerdict(readFileSync(resolved.path, "utf8"));
+  if (!verdict) {
+    throw new OrchestrationStateError("REVIEW_VERDICT_MISSING", `${source.artifact} must end with a decision: APROVADO, APROVADO_COM_RESSALVAS or REPROVADO`);
+  }
+  if (verdict === "REPROVADO") {
+    throw new OrchestrationStateError("REVIEW_REPROVED", `${source.artifact} decision is REPROVADO: run the correction loop (Fase 7) and review again before closing ${gateId}`);
+  }
+  const reviewedAtMs = statSync(resolved.path).mtimeMs;
+  const newer = Object.values(state.tasks ?? {}).filter((task) =>
+    task.sourcePresent !== false && source.categories.has(task.category) && task.status === "DONE"
+      && Date.parse(task.completedAt ?? "") > reviewedAtMs);
+  if (newer.length > 0) {
+    throw new OrchestrationStateError(
+      "REVIEW_STALE",
+      `${source.artifact} predates task(s) ${newer.map((task) => task.id).join(", ")} completed after it; review the corrected code again`,
+      { taskIds: newer.map((task) => task.id), reviewedAt: new Date(reviewedAtMs).toISOString() },
+    );
+  }
+  return `file:${resolved.relativePath}`;
+}
+
+function currentGateEvidenceFindings(artifactDir, completionGates, state = null) {
   const findings = [];
-  for (const gateId of ["contractsInspected", "infraSmokeTest"]) {
+  for (const gateId of ["contractsInspected", "infraSmokeTest", "apiContractValidation", "backendReview", "frontendReview"]) {
     const gate = completionGates?.[gateId];
     if (!gate?.required || gate.status !== "DONE") continue;
     try {
       if (gateId === "contractsInspected") validateContractInspectionEvidence(artifactDir);
       if (gateId === "infraSmokeTest") validateInfraSmokeTestEvidence(artifactDir);
+      if (gateId === "apiContractValidation") validateApiContractEvidence(artifactDir);
+      if (REVIEW_GATE_SOURCES[gateId] && state) validateReviewGateEvidence(artifactDir, state, gateId);
     } catch (error) {
       findings.push({
         id: gateId,
@@ -2423,6 +2551,13 @@ export function updateCompletionGate(artifactDir, gateId, status, options = {}) 
       throw new OrchestrationStateError(
         "GATE_WAIVER_REQUIRES_REASON",
         `Completion gate ${normalizedGateId} requires a reason when marked N/A`,
+      );
+    }
+    if (normalizedStatus === "N/A" && definition.notApplicableReasons
+      && !definition.notApplicableReasons.some((code) => String(options.reason).startsWith(code))) {
+      throw new OrchestrationStateError(
+        "GATE_WAIVER_REASON_INVALID",
+        `Completion gate ${normalizedGateId} can only be N/A with a reason starting with ${definition.notApplicableReasons.join(" or ")}`,
       );
     }
     // `delegatedTo`: o gate nao roda aqui porque outro plugin da cadeia assume
@@ -2484,6 +2619,22 @@ export function updateCompletionGate(artifactDir, gateId, status, options = {}) 
         ...artifactEvidence.map((entry) => `file:${entry.path}`),
       ]),
     ];
+    if (normalizedGateId === "requirementsCoverage" && normalizedStatus === "DONE") {
+      const result = evaluateRequirementsEvidence(artifactDir, state);
+      if (!result.valid) {
+        throw new OrchestrationStateError(
+          "REQUIREMENTS_EVIDENCE_BLOCKED",
+          "requirementsCoverage cannot be DONE: requirements-evidence.json must cover every RF/RNF/ARC (tasks and requirements index), every linked CA, with PASS criteria, concrete evidence, no open finding, and test evidence for security/privacy/isolation RNF",
+          result,
+        );
+      }
+    }
+    if (REVIEW_GATE_SOURCES[normalizedGateId] && normalizedStatus === "DONE") {
+      validateReviewGateEvidence(artifactDir, state, normalizedGateId);
+    }
+    if (normalizedGateId === "apiContractValidation" && normalizedStatus === "DONE") {
+      validateApiContractEvidence(artifactDir);
+    }
     if (normalizedStatus === "DONE" && evidence.length === 0) {
       throw new OrchestrationStateError(
         "GATE_DONE_REQUIRES_EVIDENCE",
@@ -2854,6 +3005,7 @@ export function updateTaskStatus(artifactDir, taskId, status, options = {}) {
     const state = loadRun(artifactDir, { repairSnapshot: true }).state;
     assertRunMutable(state, "update a task");
     const normalizedTaskId = ensureTask(state, taskId);
+    if (state.tasks[normalizedTaskId]?.status !== "RUNNING") assertDispatchAllowed(state, normalizedTaskId, normalizedStatus);
     const now = iso(options.now);
     const projectRoot = resolve(options.projectRoot ?? join(resolve(artifactDir), "..", ".."));
     const git = inspectGit(projectRoot);
@@ -3015,6 +3167,18 @@ export function sweepStalledTasks(artifactDir, options = {}) {
     // acontecido. `lastSweepAt` agora e evidencia de que a Fase 6 de fato
     // varreu tasks — commitEvent roda sempre, mudando task ou nao.
     const changed = stalled.length > 0 || graceExpired.length > 0;
+    // Watch ticks (skipIfUnchanged) persist a quiet sweep at most once per heartbeat window: a real
+    // run wrote 418 sweep/reconcile events out of 499, 190 of them changing nothing, and every state
+    // load re-read them all. lastSweepAt still proves the sweeper ran (monitoring gate).
+    const heartbeatMs = Number(options.sweepHeartbeatSeconds ?? 300) * 1000;
+    const lastSweepMs = Date.parse(state.lifecycle?.lastSweepAt ?? "");
+    const sameThresholds = state.lifecycle?.staleIdleSeconds === idleSeconds
+      && state.lifecycle?.staleInToolSeconds === inToolSeconds
+      && state.lifecycle?.stallGraceSeconds === graceSeconds;
+    if (options.skipIfUnchanged && !changed && sameThresholds && Number.isFinite(lastSweepMs)
+      && nowDate.getTime() - lastSweepMs < heartbeatMs) {
+      return { changed: false, skipped: true, state, event: null, stalled, graceExpired, summary: runSummary(state) };
+    }
     const draft = { ...state, tasks };
     const runStatus = deriveRunStatus(tasks, state.status);
     const currentWave = computeCurrentWave(draft);
@@ -3333,13 +3497,17 @@ function reconcileLocked(artifactDir, state, options = {}) {
 
   for (const [taskId, task] of Object.entries(state.tasks)) {
     const probe = probeSet.tasks?.[taskId] ?? probeSet.tasks?.[taskId.toLowerCase()] ?? null;
-    if (["UNKNOWN", "RUNNING", "STALLED", "FAILED", "BLOCKED"].includes(task.status) || probe) {
+    const reconciledNow = ["UNKNOWN", "RUNNING", "STALLED", "FAILED", "BLOCKED"].includes(task.status) || Boolean(probe);
+    if (reconciledNow) {
       tasks[taskId] = reconcileTask(task, probe, projectRoot, git, now);
     } else {
       tasks[taskId] = clone(task);
     }
 
-    const reconciled = tasks[taskId].reconciliation;
+    // Only this pass's verdicts become recommendations. A DONE task keeps the `reconciliation` it got
+    // while it was STALLED; re-listing it made resume tell the operator to interrupt tasks that had
+    // long finished (OficinaAI, 2026-09).
+    const reconciled = reconciledNow ? tasks[taskId].reconciliation : null;
     if (reconciled && reconciled.recommendation !== "CONTINUE") {
       recommendations.push({
         taskId,
@@ -3400,11 +3568,37 @@ function reconcileLocked(artifactDir, state, options = {}) {
   };
 }
 
+/** A task without the fields a reconciliation pass rewrites on every call (timestamps only). */
+function reconciliationStableView(task) {
+  if (!task) return task;
+  const { updatedAt: _updatedAt, reconciliation, ...rest } = task;
+  if (!reconciliation) return rest;
+  const { reconciledAt: _reconciledAt, ...stableReconciliation } = reconciliation;
+  return { ...rest, reconciliation: stableReconciliation };
+}
+
+function reconciliationChanged(state, result) {
+  const previousIds = Object.keys(state.tasks ?? {});
+  const nextIds = Object.keys(result.tasks ?? {});
+  if (previousIds.length !== nextIds.length || nextIds.some((id) => !Object.hasOwn(state.tasks, id))) return true;
+  if (nextIds.some((id) => !isDeepStrictEqual(reconciliationStableView(state.tasks[id]), reconciliationStableView(result.tasks[id])))) return true;
+  if (state.status !== result.runStatus || !isDeepStrictEqual(state.currentWave, result.currentWave)) return true;
+  const { lastReconciledAt: _a, ...previousResume } = state.resume ?? {};
+  const { lastReconciledAt: _b, ...nextResume } = result.resume ?? {};
+  if (!isDeepStrictEqual(previousResume, nextResume)) return true;
+  return state.repository?.head !== result.repository?.head || state.repository?.dirty !== result.repository?.dirty;
+}
+
 export function reconcileRunAtDirectory(artifactDir, options = {}) {
   return withLock(artifactDir, () => {
-    const state = loadRun(artifactDir, { repairSnapshot: true, verifyReplay: true }).state;
+    // Full replay verification is for explicit reconcile/resume; the watch tick passes
+    // verifyReplay: false so a poll does not re-reduce the whole event log (performance finding).
+    const state = loadRun(artifactDir, { repairSnapshot: true, verifyReplay: options.verifyReplay !== false }).state;
     assertRunMutable(state, "reconcile executors");
     const result = reconcileLocked(artifactDir, state, options);
+    if (options.skipIfUnchanged && !reconciliationChanged(state, result)) {
+      return { state, event: null, skipped: true, report: result.report, summary: runSummary(state) };
+    }
     const committed = commitEvent(
       artifactDir,
       state,
@@ -4101,12 +4295,63 @@ export function auditRunCompletion(artifactDir) {
   return completionAudit(artifactDir, state);
 }
 
+// Non-functional requirements whose category is about security, privacy, tenant isolation or
+// compliance need executable proof: a code reference is not enough. Audit finding: a real run
+// (OficinaAI, 2026-09) shipped privilege escalation and cross-tenant reads that "had evidence".
+const CRITICAL_NFR_CATEGORY = /seguran|security|privac|lgpd|gdpr|isolament|isolation|tenant|autentica|authentica|autoriza|authoriz|complian|conformidade|auditoria/i;
+
+/** plan/requirements-index.json (validate-requirements-coverage.mjs --dir), or null. */
+function readRequirementsIndex(artifactDir) {
+  const resolved = resolveArtifact(artifactDir, "requirements-index.json");
+  if (!resolved) return null;
+  try {
+    return JSON.parse(readFileSync(resolved.path, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function requirementsIndexExpectations(index) {
+  if (!index) return { ids: [], criteriaByRequirement: new Map(), criticalIds: new Set() };
+  const upper = (value) => (typeof value === "string" ? value.toUpperCase() : null);
+  const ids = [
+    ...(index.requirements ?? []), ...(index.nonFunctionalRequirements ?? []), ...(index.architecturePatterns ?? []),
+  ].map((entry) => upper(entry?.id)).filter(Boolean);
+  const criteriaByRequirement = new Map();
+  for (const criterion of index.acceptanceCriteria ?? []) {
+    const criterionId = upper(criterion?.id);
+    const owners = Array.isArray(criterion?.requirementIds) && criterion.requirementIds.length
+      ? criterion.requirementIds
+      : [criterion?.requirementId];
+    for (const owner of owners.map(upper).filter(Boolean)) {
+      if (!criterionId) continue;
+      if (!criteriaByRequirement.has(owner)) criteriaByRequirement.set(owner, new Set());
+      criteriaByRequirement.get(owner).add(criterionId);
+    }
+  }
+  const criticalIds = new Set((index.nonFunctionalRequirements ?? [])
+    .filter((entry) => CRITICAL_NFR_CATEGORY.test(`${entry?.category ?? ""} ${entry?.text ?? ""}`))
+    .map((entry) => upper(entry?.id)).filter(Boolean));
+  return { ids, criteriaByRequirement, criticalIds };
+}
+
 function requirementsEvidenceAudit(artifactDir, state) {
   const gate = state.completionGates?.requirementsCoverage;
   // A missing gate identifies a run created before 4.10.0. It is not silently
   // promoted to DONE: callers receive PARTIAL as the recommended disposition.
   if (!gate) return { applicable: false, legacy: true, valid: false, reason: "REQUIREMENTS_EVIDENCE_GATE_MISSING" };
   if (!gate.required) return { applicable: false, legacy: false, valid: true, reason: "REQUIREMENTS_EVIDENCE_NOT_APPLICABLE" };
+  return evaluateRequirementsEvidence(artifactDir, state);
+}
+
+/**
+ * Content check of review/requirements-evidence.json. Expected ids are every id a task claims PLUS,
+ * when the index snapshot exists, every RF/RNF/ARC the Pensador extracted; an RF entry must carry
+ * every CA the PRD links to it; a security/privacy/isolation RNF needs `kind: "test"` evidence.
+ * Runs when the gate closes (updateCompletionGate) and again in the completion audit — the gate used
+ * to close DONE on the mere existence of the file while the review rejected 7 CAs (OficinaAI).
+ */
+function evaluateRequirementsEvidence(artifactDir, state) {
   const resolved = resolveArtifact(artifactDir, "requirements-evidence.json");
   if (!resolved) return { applicable: true, legacy: false, valid: false, reason: "REQUIREMENTS_EVIDENCE_MISSING" };
   try {
@@ -4114,14 +4359,29 @@ function requirementsEvidenceAudit(artifactDir, state) {
     if (payload?.schemaVersion !== 1) {
       return { applicable: true, legacy: false, valid: false, reason: "REQUIREMENTS_EVIDENCE_INVALID_SCHEMA" };
     }
-    const expectedRequirementIds = [...new Set(
-      Object.values(state.tasks ?? {}).flatMap((task) => task.requirementIds ?? []),
-    )].sort();
+    const index = requirementsIndexExpectations(readRequirementsIndex(artifactDir));
+    const expectedRequirementIds = [...new Set([
+      ...Object.values(state.tasks ?? {}).flatMap((task) => (task.requirementIds ?? []).map((id) => String(id).toUpperCase())),
+      ...index.ids,
+    ])].sort();
     const entries = Array.isArray(payload?.requirements) ? payload.requirements : [];
     const seen = new Set();
     const invalid = [];
+    const missingAcceptanceCriteria = [];
+    const untestedCriticalRequirements = [];
     for (const entry of entries) {
-      const requirementId = entry?.requirementId;
+      const requirementId = typeof entry?.requirementId === "string" ? entry.requirementId.toUpperCase() : entry?.requirementId;
+      const criteria = Array.isArray(entry?.acceptanceCriteria) ? entry.acceptanceCriteria : [];
+      const linked = index.criteriaByRequirement.get(requirementId);
+      if (linked) {
+        const present = new Set(criteria.map((criterion) => String(criterion?.id ?? "").toUpperCase()));
+        const missing = [...linked].filter((id) => !present.has(id));
+        if (missing.length > 0) missingAcceptanceCriteria.push({ requirementId, missing });
+      }
+      if (index.criticalIds.has(requirementId) && !criteria.some((criterion) =>
+        Array.isArray(criterion?.evidence) && criterion.evidence.some((evidence) => String(evidence?.kind ?? "").toLowerCase() === "test"))) {
+        untestedCriticalRequirements.push(requirementId);
+      }
       const duplicate = Boolean(requirementId && seen.has(requirementId));
       if (requirementId && expectedRequirementIds.includes(requirementId)) seen.add(requirementId);
       const hasInvalidCriterion = !Array.isArray(entry?.acceptanceCriteria) ||
@@ -4143,9 +4403,12 @@ function requirementsEvidenceAudit(artifactDir, state) {
     return {
       applicable: true,
       legacy: false,
-      valid: entries.length > 0 && invalid.length === 0 && missingRequirementIds.length === 0,
+      valid: entries.length > 0 && invalid.length === 0 && missingRequirementIds.length === 0
+        && missingAcceptanceCriteria.length === 0 && untestedCriticalRequirements.length === 0,
       invalidRequirementIds: invalid.map((entry) => entry.requirementId),
       missingRequirementIds,
+      missingAcceptanceCriteria,
+      untestedCriticalRequirements,
     };
   } catch {
     return { applicable: true, legacy: false, valid: false, reason: "REQUIREMENTS_EVIDENCE_INVALID_JSON" };
@@ -4187,7 +4450,7 @@ function completionAudit(artifactDir, state) {
   const gatesWithoutEvidence = Object.values(completionGates).filter(
     (gate) => gate.status === "DONE" && (gate.evidence ?? []).length === 0,
   );
-  const invalidGateEvidence = currentGateEvidenceFindings(artifactDir, completionGates);
+  const invalidGateEvidence = currentGateEvidenceFindings(artifactDir, completionGates, state);
   // A waivable gate (e.g. browserE2E) explicitly marked N/A via `--required false`
   // still means the corresponding verification never ran — it just did so with a
   // documented reason instead of silently. `incompleteGates` alone can't see this,
@@ -4205,8 +4468,13 @@ function completionAudit(artifactDir, state) {
   const delegatedGates = Object.values(completionGates).filter(
     (gate) => gate.requiredOverride === false && gate.delegatedTo,
   );
+  // A gate whose definition lists notApplicableReasons was waived with one of them (enforced in
+  // updateCompletionGate): it did not apply, so it does not force PARTIAL like a skipped verification.
+  const notApplicableGates = Object.values(completionGates).filter(
+    (gate) => gate.requiredOverride === false && !gate.delegatedTo && COMPLETION_GATE_DEFINITIONS[gate.id]?.notApplicableReasons,
+  );
   const waivedGates = Object.values(completionGates).filter(
-    (gate) => gate.requiredOverride === false && !gate.delegatedTo,
+    (gate) => gate.requiredOverride === false && !gate.delegatedTo && !COMPLETION_GATE_DEFINITIONS[gate.id]?.notApplicableReasons,
   );
   const nextStageConsumer = delegatedGates.length > 0
     ? readHandoffNextStageConsumer(artifactDir)
@@ -4257,6 +4525,7 @@ function completionAudit(artifactDir, state) {
     gatesWithoutEvidence: gatesWithoutEvidence.map((gate) => gate.id),
     invalidGateEvidence,
     waivedGates: waivedGates.map((gate) => ({ id: gate.id, reason: gate.reason })),
+    notApplicableGates: notApplicableGates.map((gate) => ({ id: gate.id, reason: gate.reason })),
     delegatedGates: delegatedGates.map((gate) => ({
       id: gate.id,
       delegatedTo: gate.delegatedTo,

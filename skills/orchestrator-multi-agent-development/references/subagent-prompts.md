@@ -13,7 +13,8 @@ Sempre leia este arquivo antes de delegar para Codex ou Antigravity/AGY.
 - Antes de prometer Context7 ou Codebase Memory no prompt de uma task Codex/AGY, prefira `checks.optional.mcpPerAgent.<agent>.<servidor>.ok` (verdade ao vivo por agente, so existe quando o preflight rodou com `--check-agent-mcp`) em vez do agregado `checks.optional.mcp.<servidor>.ok` — esse agregado so prova que o MCP esta registrado em algum lugar da maquina, nao necessariamente na CLI que vai executar a task (ver `references/mcp-context.md`).
 - Se o sinal aplicavel indicar disponibilidade para Context7, use-o antes de decidir sobre bibliotecas, frameworks, SDKs, APIs, CLIs ou cloud services externos, aplicando Single-Concept Scoping (consulta focada em um unico conceito, sem misturar temas), versao canonica `/org/project/version` quando compativel com o projeto e limite de ate 3 consultas por tarefa. Nao use para logica de negocio interna ou refatoracao local.
 - Se o sinal aplicavel indicar disponibilidade para Codebase Memory, use `search_graph`/`trace_path`/`get_code_snippet` para localizar o simbolo, quem o chama e quem ele chama, antes de varrer arquivos com Read/Glob/Grep. Grafo e pista, nao prova: confirme por leitura do arquivo antes de alterar comportamento. Se o grafo nao cobrir o arquivo, ou a consulta falhar, leia o arquivo diretamente. Fique dentro do escopo permitido mesmo que o grafo aponte para fora dele.
-- Se existir contrato API/UI, siga o contrato como fonte da verdade.
+- Se existir contrato API/UI, siga o contrato como fonte da verdade. Tipos, clientes, mocks e CI leem a copia do contrato **dentro do repositorio** (`contracts/`, materializada na Fase 4.2); nunca referencie `.pensador/`, `.orchestrator/`, `.orchestration/`, `.testador/` ou `.executor/` em codigo, script de `package.json`, Dockerfile ou config — o gate de onda reprova (`coordinationRefs`).
+- Formatacao: nenhuma linha de codigo acima de 200 caracteres (handler, query ou objeto inteiro numa linha so reprova o gate de onda, `checks.format`); rode o formatador da stack (`dotnet format`, Prettier quando configurado) na sua fatia antes de reportar DONE.
 - Valide casing JSON e wire format real; nao assuma que nomes de DTO internos sao iguais ao payload na rede.
 - Auto-verificação local obrigatoria antes de reportar DONE: todo subagente DEVE executar o build/compilacao e a verificacao/testes locais da sua fatia no seu workspace ou worktree (`<BUILD_CMD>` e `<TEST_CMD>`). Qualquer erro de compilacao, sintaxe, tipagem ou lint DEVE ser corrigido antes de encerrar. So retorne `Status: DONE` se a verificacao concluir com exit code 0.
 - Roteamento de Fallback de Back-End: Quando o Codex esgotar cota (`QUOTA_EXHAUSTED`), o fallback de implementacao de back-end delega exclusivamente para o AGY (`cc-antigravity-plugin:antigravity-coder`) com modelos Gemini (`gemini-3.8-flash-medium` para tarefas pontuais/CRUDs e `gemini-3.8-flash-high` para tarefas de arquitetura/seguranca), NUNCA para modelos Claude ou subagentes `claude-code`, preservando a cota da sessao principal.
@@ -390,7 +391,8 @@ Verifique:
 - auth/autorizacao, validacoes e tratamento de erro;
 - migrations, persistencia, indices e integridade referencial;
 - regressao no back-end;
-- seguranca;
+- seguranca, com foco explicito em: isolamento entre tenants/clientes (toda query filtrada, RLS quando declarado), escalada de privilegio entre papeis, emissao/rotacao/reuso de tokens, dados pessoais (LGPD: coleta minima, exposicao em logs e respostas) e fluxos de dinheiro/estoque (estorno, comissao, baixa de estoque: atomicidade, idempotencia e trilha de auditoria) — numa run real as falhas graves se concentraram exatamente nesses fluxos;
+- conformidade do contrato ja verificada na Fase 8.0 (`evidence/api-contract-validation.json` PASS para o contrato atual); divergencia de status code/codigo de erro que o validador nao cobriu e achado;
 - build back-end sem erros;
 - pendencias antes do merge.
 

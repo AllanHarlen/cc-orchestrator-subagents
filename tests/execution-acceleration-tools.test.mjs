@@ -189,6 +189,8 @@ test("runWaveQualityGate runs wave checks and reports status", () => {
     dryRun: true,
     buildCommand: "echo building",
     testCommand: "echo testing",
+    // Hermetic: without it the format/coordination checks would read this repo's own git diff.
+    changedFiles: [],
   });
 
   assert.equal(result.status, "PASS");

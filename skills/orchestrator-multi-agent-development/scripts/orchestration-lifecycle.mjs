@@ -22,6 +22,8 @@ function options(args) {
     staleInToolSeconds: numberArg(args["stale-in-tool-seconds"]),
     stallGraceSeconds: numberArg(args["stall-grace-seconds"]),
     intervalSeconds: numberArg(args["interval-seconds"]),
+    maxIntervalSeconds: numberArg(args["max-interval-seconds"]),
+    persistEveryTick: boolArg(args["persist-every-tick"], false),
     maxTicks: numberArg(args["max-ticks"]),
     autoStop: boolArg(args["auto-stop"], true),
     includeAll: boolArg(args["include-all"], false),
@@ -43,7 +45,7 @@ function help() {
     name: "orchestration-lifecycle",
     commands: {
       tick: "tick --dir <run> [--resume] [--probe-file|--codex-file|--agy-file <json>] [--adapter-config <json>]",
-      watch: "watch --dir <run> [--interval-seconds 30] [--max-ticks N] [--auto-stop=false] — prints one NDJSON {type:\"tick\",...} line per tick; stops early (stoppedReason: NO_ACTIVE_TASKS|RUN_TERMINAL) unless --auto-stop=false",
+      watch: "watch --dir <run> [--interval-seconds 30] [--max-interval-seconds 120] [--persist-every-tick] [--max-ticks N] [--auto-stop=false] — quiet ticks write no event and back off up to --max-interval-seconds; — prints one NDJSON {type:\"tick\",...} line per tick; stops early (stoppedReason: NO_ACTIVE_TASKS|RUN_TERMINAL) unless --auto-stop=false",
       interrupt: "interrupt --dir <run> --task <id> (--adapter-config <json>|--external-confirmed) [--reason <text>]",
       retry: "retry --dir <run> --task <id> [--confirmed-gone] (--adapter-config <json>|--external-confirmed)",
       cancel: "cancel --dir <run> --reason <text> [--adapter-config <json>] [--finalize]",

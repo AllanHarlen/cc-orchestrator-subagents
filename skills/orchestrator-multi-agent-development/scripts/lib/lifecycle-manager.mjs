@@ -240,6 +240,9 @@ export function tickLifecycle(artifactDir, options = {}) {
     });
   } else {
     heartbeats = applyObservedHeartbeats(directory, probe, { projectRoot, now: options.now });
+    // A tick is a poll: no event when nothing changed (sweep keeps a heartbeat) and no full replay
+    // verification of the log (explicit `reconcile`/`resume` still verify). Performance finding: a
+    // real run polled every 30 s and each tick replayed the whole 10 MB events.jsonl several times.
     sweep = sweepStalledTasks(directory, {
       projectRoot,
       actor: "lifecycle-manager",
@@ -247,28 +250,38 @@ export function tickLifecycle(artifactDir, options = {}) {
       staleIdleSeconds: options.staleIdleSeconds,
       staleInToolSeconds: options.staleInToolSeconds,
       stallGraceSeconds: options.stallGraceSeconds,
+      skipIfUnchanged: options.persistEveryTick !== true,
     });
     reconciliation = reconcileRunAtDirectory(directory, {
       projectRoot,
       probeFile: probePath,
       actor: "lifecycle-manager",
       now: options.now,
+      verifyReplay: false,
+      skipIfUnchanged: options.persistEveryTick !== true,
     });
   }
   const releasedLeases = releaseTerminalLeases(directory, projectRoot, options.now);
+  const quiet = !options.resume && sweep?.skipped === true && reconciliation?.skipped === true
+    && heartbeats.length === 0 && releasedLeases.length === 0;
   let observability = null;
-  try {
-    observability = {
-      history: projectRunHistory(projectRoot, directory),
-      telemetry: projectRunTelemetry(projectRoot, directory),
-    };
-  } catch (error) {
-    observability = {
-      error: {
-        code: error?.code ?? "OBSERVABILITY_PROJECTION_FAILED",
-        message: error?.message ?? String(error),
-      },
-    };
+  if (quiet) {
+    // Nothing was persisted: the history/telemetry projections would only recompute the same rows.
+    observability = { skipped: true };
+  } else {
+    try {
+      observability = {
+        history: projectRunHistory(projectRoot, directory),
+        telemetry: projectRunTelemetry(projectRoot, directory),
+      };
+    } catch (error) {
+      observability = {
+        error: {
+          code: error?.code ?? "OBSERVABILITY_PROJECTION_FAILED",
+          message: error?.message ?? String(error),
+        },
+      };
+    }
   }
   return {
     artifactDir: directory,
@@ -278,8 +291,9 @@ export function tickLifecycle(artifactDir, options = {}) {
     heartbeats,
     releasedLeases,
     sweep: sweep
-      ? { changed: sweep.changed, stalled: sweep.stalled, graceExpired: sweep.graceExpired }
+      ? { changed: sweep.changed, skipped: sweep.skipped === true, stalled: sweep.stalled, graceExpired: sweep.graceExpired }
       : null,
+    quiet,
     summary: reconciliation.summary,
     report: reconciliation.report,
     actions: lifecycleActions(reconciliation.state),
@@ -485,7 +499,12 @@ function watchStopReason(summary) {
 }
 
 export async function watchLifecycle(artifactDir, options = {}) {
-  const intervalMs = Math.max(1_000, Number(options.intervalSeconds ?? 30) * 1000);
+  const baseIntervalMs = Math.max(1_000, Number(options.intervalSeconds ?? 30) * 1000);
+  // Quiet ticks back off exponentially up to maxIntervalSeconds (default 120 s, never below the
+  // base); any change resets to the base interval. Stall thresholds are minutes (450 s idle), so a
+  // two-minute ceiling cannot hide a STALLED transition for long.
+  const maxIntervalMs = Math.max(baseIntervalMs, Number(options.maxIntervalSeconds ?? 120) * 1000);
+  let intervalMs = baseIntervalMs;
   const maxTicks = options.maxTicks == null ? Number.POSITIVE_INFINITY : Math.max(1, Number(options.maxTicks));
   const autoStop = options.autoStop !== false;
   const results = [];
@@ -511,6 +530,7 @@ export async function watchLifecycle(artifactDir, options = {}) {
       if (stoppedReason) break;
     }
     if (index + 1 >= maxTicks) break;
+    intervalMs = result.quiet ? Math.min(intervalMs * 2, maxIntervalMs) : baseIntervalMs;
     await new Promise((resolvePromise) => setTimeout(resolvePromise, intervalMs));
   }
   return {

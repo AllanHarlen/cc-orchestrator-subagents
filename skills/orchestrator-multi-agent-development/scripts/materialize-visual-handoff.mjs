@@ -1,11 +1,29 @@
 #!/usr/bin/env node
 /** Validates and optionally materializes only authoritative resolved design packages. */
 import { cpSync, existsSync, mkdirSync, readFileSync } from "node:fs";
-import { dirname, isAbsolute, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { inspectVisualHandoff } from "./lib/pensador-ingest.mjs";
 import { parseArgs, required } from "./lib/cli-utils.mjs";
+
+/**
+ * Files of the resolved package the product consumes. Audit finding: copying the whole package put
+ * preview HTML, provenance and audit files inside `frontend/src/styles` of a real app (OficinaAI,
+ * 2026-09), and the preview's `.grid` scaffolding leaked into the product CSS.
+ */
+export const PRODUCT_PACKAGE_FILES = Object.freeze([
+  "design-contract.json",
+  "tokens.css",
+  "components.css",
+  "tailwind-v4.css",
+  "design-tokens.json",
+  "DESIGN.md",
+  "USAGE.md",
+  "manifest.json",
+  "components.manifest.json",
+  "assets/manifest.json",
+]);
 
 function within(root, target) {
   const rel = relative(root, target);
@@ -36,10 +54,16 @@ export function materializeVisualHandoff({ projectRoot = process.cwd(), handoffP
       continue;
     }
     const destination = targetPath(root, pkg.materializeInto);
-    operations.push({ type: "design-package", source: pkg.packageRoot, destination, applied: apply });
+    // Only what the product imports or reads goes into the code tree; the visual reference
+    // (components.html, preview/) and the audit trail stay in the Pensador package, whose path is
+    // reported as `referenceRoot` for prompts, the bridge's --design-system and the Fase 9 checks.
+    const productFiles = PRODUCT_PACKAGE_FILES.filter((file) => existsSync(join(pkg.packageRoot, file)));
+    operations.push({ type: "design-package", source: pkg.packageRoot, destination, referenceRoot: pkg.packageRoot, files: productFiles, applied: apply });
     if (apply) {
-      mkdirSync(dirname(destination), { recursive: true });
-      cpSync(pkg.packageRoot, destination, { recursive: true, force: true });
+      for (const file of productFiles) {
+        mkdirSync(dirname(join(destination, file)), { recursive: true });
+        cpSync(join(pkg.packageRoot, file), join(destination, file), { force: true });
+      }
     }
     for (const asset of pkg.assets) {
       const source = resolve(pkg.packageRoot, "assets", asset.file);

@@ -14,6 +14,19 @@
         }
       ],
       "findings": []
+    },
+    {
+      "requirementId": "RNF-01",
+      "acceptanceCriteria": [
+        {
+          "id": "RNF-01-VERIFICADO",
+          "status": "PASS",
+          "evidence": [
+            { "kind": "test", "ref": "tests/perf/latency.test.ts#p95-under-500ms" }
+          ]
+        }
+      ],
+      "findings": []
     }
   ]
 }

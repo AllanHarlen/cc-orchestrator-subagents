@@ -35,6 +35,7 @@ import {
   verifyRun,
 } from "../skills/orchestrator-multi-agent-development/scripts/lib/orchestration-state.mjs";
 import { writeProjectConfig } from "../skills/orchestrator-multi-agent-development/scripts/lib/project-config.mjs";
+import { approveReview, waiveApiContract } from "./helpers/review-report.mjs";
 
 const temporaryRoots = [];
 
@@ -119,6 +120,10 @@ function completeRun(root, artifactDir) {
   ]) {
     writeFileSync(join(artifactDir, name), name === "handoff.json" ? VALID_HANDOFF : `# ${name}\n`, "utf8");
   }
+  // Review gates close only on an approving decision written after the reviewed tasks finished.
+  approveReview(artifactDir, "backendReview");
+  approveReview(artifactDir, "frontendReview");
+  waiveApiContract(artifactDir, root);
   writeFileSync(join(artifactDir, "desktop.png"), "desktop", "utf8");
   writeFileSync(join(artifactDir, "mobile.png"), "mobile", "utf8");
   writeFileSync(join(artifactDir, "ui-evidence.json"), JSON.stringify({
@@ -401,6 +406,42 @@ test("Git or file evidence without executor authority stays UNKNOWN", () => {
   const task = resumed.state.tasks["BE-01"];
   assert.equal(task.status, "UNKNOWN");
   assert.equal(task.reconciliation.recommendation, "VERIFY_BEFORE_REEXECUTE");
+});
+
+test("sweep and reconcile events persist only changed tasks and still replay to the same state", () => {
+  const { root, artifactDir } = fixture();
+  initRun({ projectRoot: root, artifactDir, slug: "demo-run", runId: "run-delta" });
+  updateTaskStatus(artifactDir, "BE-01", "RUNNING", {
+    projectRoot: root,
+    now: "2026-08-17T12:00:00.000Z",
+  });
+  // Poll sem mudanca: evento de sweep sem nenhuma task no payload.
+  sweepStalledTasks(artifactDir, { projectRoot: root, now: "2026-08-17T12:01:00.000Z" });
+  // Poll que estagna BE-01: so BE-01 vai no payload.
+  sweepStalledTasks(artifactDir, {
+    projectRoot: root,
+    now: "2026-08-17T12:07:31.000Z",
+    staleIdleSeconds: 450,
+  });
+  reconcileRunAtDirectory(artifactDir, { projectRoot: root, now: "2026-08-17T12:08:00.000Z" });
+
+  const events = readFileSync(join(artifactDir, "events.jsonl"), "utf8")
+    .split("\n").filter(Boolean).map((line) => JSON.parse(line));
+  const sweeps = events.filter((event) => event.type === "STALL_SWEEP_COMPLETED");
+  assert.equal(sweeps.length, 2);
+  for (const sweep of sweeps) assert.equal(sweep.payload.tasks, undefined);
+  assert.deepEqual(Object.keys(sweeps[0].payload.changedTasks), []);
+  assert.deepEqual(Object.keys(sweeps[1].payload.changedTasks), ["BE-01"]);
+  const reconciled = events.find((event) => event.type === "RUN_RECONCILED");
+  assert.equal(reconciled.payload.tasks, undefined);
+  assert.equal(Object.hasOwn(reconciled.payload.changedTasks, "FE-01"), false);
+
+  // O snapshot precisa bater com o replay do log compacto.
+  unlinkSync(join(artifactDir, "state.json"));
+  const replayed = loadRun(artifactDir, { repairSnapshot: true }).state;
+  assert.equal(replayed.tasks["BE-01"].status, "STALLED");
+  assert.equal(replayed.tasks["FE-01"].status, "PENDING");
+  assert.equal(verifyRun(artifactDir).valid, true);
 });
 
 test("stall detection uses progress silence and heartbeat recovers during grace", () => {
@@ -835,9 +876,12 @@ test("resume follows the explicit phase sequence after browser E2E", () => {
   sweepStalledTasks(artifactDir, { projectRoot: root });
   updateCompletionGate(artifactDir, "monitoring", "DONE", { projectRoot: root, evidence: ["manual"] });
   updatePhase(artifactDir, 6, "DONE", { projectRoot: root, evidence: "test:6:DONE" });
+  approveReview(artifactDir, "backendReview");
+  waiveApiContract(artifactDir, root);
   updateCompletionGate(artifactDir, "backendReview", "DONE", { projectRoot: root, evidence: ["manual"] });
   updatePhase(artifactDir, 7, "DONE", { projectRoot: root, evidence: "test:7:DONE" });
   updatePhase(artifactDir, 8, "DONE", { projectRoot: root, evidence: "test:8:DONE" });
+  approveReview(artifactDir, "frontendReview");
   updateCompletionGate(artifactDir, "frontendReview", "DONE", { projectRoot: root, evidence: ["manual"] });
   writeFileSync(join(artifactDir, "desktop.png"), "fake-png", "utf8");
   writeFileSync(join(artifactDir, "mobile.png"), "fake-png", "utf8");
@@ -1090,6 +1134,54 @@ test("task parsing ignores prose requirements and accepts only structural task r
   assert.deepEqual(Object.keys(parsed.tasks).sort(), ["BE-01", "FE-01"]);
   assert.deepEqual(parsed.tasks["BE-01"].requirementIds, ["US-01", "RF-01", "RF-02"]);
   assert.deepEqual(parsed.tasks["BE-01"].contractIds, ["CT-01-auth"]);
+});
+
+test("task parsing also collects RNF and ARC ids from requirementIds, alongside RF/US", () => {
+  // requirements.json agora tambem carrega nonFunctionalRequirements (RNF-XX) e
+  // architecturePatterns (ARC-XX sinteticos) — uma task precisa poder reivindicar
+  // qualquer um dos tres para o gate de cobertura enxergar a atribuicao.
+  const root = mkdtempSync(join(process.cwd(), ".tmp-parser-rnf-arc-"));
+  temporaryRoots.push(root);
+  writeFileSync(join(root, "tasks-classification.md"), [
+    "## BE-01 - Fundacao",
+    "- requirementIds: RF-01, RNF-01, RNF-02, ARC-01",
+  ].join("\n"), "utf8");
+  writeFileSync(join(root, "waves.md"), "# Wave 1\n- BE-01\n", "utf8");
+  const parsed = parseTaskArtifacts(root);
+  assert.deepEqual(parsed.tasks["BE-01"].requirementIds, ["RF-01", "RNF-01", "RNF-02", "ARC-01"]);
+});
+
+test("task parsing keeps planning fields written without backticks", () => {
+  // Formato real gravado na Fase 2 de uma run (OficinaAI): sem crases, o
+  // parser antigo zerava contractIds/allowedPaths/expectedFiles/validationPlan.
+  const root = mkdtempSync(join(process.cwd(), ".tmp-parser-plain-"));
+  temporaryRoots.push(root);
+  writeFileSync(join(root, "tasks-classification.md"), [
+    "## BE-01 - Fundacao back-end",
+    "- categoria: BACKEND_ONLY",
+    "- contractIds: CT-01 (auth), CT-02",
+    "- expectedFiles: backend/OficinaAI.sln, backend/src/Domain/**, backend/tests/**",
+    "- allowedPaths: backend/**",
+    "- validationPlan: dotnet build; testes de isolamento de tenant, rotacao e reuso de refresh token",
+    "## FE-01 - Shell",
+    "- allowedPaths: `frontend/**`",
+    "- validationPlan: n/a",
+    "- expectedFiles: nenhum",
+  ].join("\n"), "utf8");
+  writeFileSync(join(root, "waves.md"), "# Wave 1\n- BE-01\n- FE-01\n", "utf8");
+  const parsed = parseTaskArtifacts(root);
+  const be = parsed.tasks["BE-01"];
+  assert.deepEqual(be.contractIds, ["CT-01", "CT-02"]);
+  assert.deepEqual(be.expectedFiles, ["backend/OficinaAI.sln", "backend/src/Domain/**", "backend/tests/**"]);
+  assert.deepEqual(be.allowedPaths, ["backend/**"]);
+  assert.deepEqual(be.validationPlan, [
+    "dotnet build",
+    "testes de isolamento de tenant, rotacao e reuso de refresh token",
+  ]);
+  const fe = parsed.tasks["FE-01"];
+  assert.deepEqual(fe.allowedPaths, ["frontend/**"]);
+  assert.deepEqual(fe.validationPlan, []);
+  assert.deepEqual(fe.expectedFiles, []);
 });
 
 test("requirements evidence uses the review layout and covers every task requirement", () => {

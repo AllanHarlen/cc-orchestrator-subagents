@@ -147,6 +147,36 @@ test("computeRequirementsCoverage: a task referencing an unrelated RF id does no
   assert.deepEqual(coverage.uncoveredRequirementIds, ["RF-01", "RF-02", "RF-03"]);
 });
 
+// --- RNF (non-functional) and ARC (architecture pattern) ids --------------
+// Audit finding: a real run (OficinaAI, 2026-09) closed DONE with every RF
+// covered while its RNF (performance, tenant isolation) and architecture
+// rules (Repository + UnitOfWork) had no task and no evidence anywhere.
+
+test("extractCoveredRequirementIds: also collects RNF and ARC ids, alongside RF in the same field", () => {
+  const covered = extractCoveredRequirementIds("requirementIds: RF-01, RNF-02, ARC-01");
+  assert.deepEqual([...covered].sort(), ["ARC-01", "RF-01", "RNF-02"]);
+});
+
+test("computeRequirementsCoverage: checks nonFunctionalRequirements and architecturePatterns, not just requirements", () => {
+  const requirementsIndex = {
+    requirements: [{ id: "RF-01" }],
+    nonFunctionalRequirements: [{ id: "RNF-01" }, { id: "RNF-02" }],
+    architecturePatterns: [{ id: "ARC-01" }],
+  };
+  const coverage = computeRequirementsCoverage(requirementsIndex, "## Task BE-01\n- requirementIds: RF-01, RNF-01, ARC-01");
+  assert.equal(coverage.totalRequirements, 4);
+  assert.deepEqual(coverage.uncoveredRequirementIds, ["RNF-02"]);
+});
+
+test("computeRequirementsCoverage: applicable even with requirements.requirements empty, as long as RNF/ARC exist", () => {
+  const coverage = computeRequirementsCoverage(
+    { requirements: [], nonFunctionalRequirements: [{ id: "RNF-01" }] },
+    "no tasks here",
+  );
+  assert.equal(coverage.applicable, true);
+  assert.deepEqual(coverage.uncoveredRequirementIds, ["RNF-01"]);
+});
+
 // --- CLI round-trip ---------------------------------------------------------
 
 const roots = [];

@@ -12,6 +12,7 @@ import {
   updateCompletionGate,
   updatePhase,
 } from "../skills/orchestrator-multi-agent-development/scripts/lib/orchestration-state.mjs";
+import { approveReview, waiveApiContract } from "./helpers/review-report.mjs";
 
 /**
  * Fixture with both a BACKEND_ONLY and a FRONTEND_ONLY task, so
@@ -45,6 +46,8 @@ function closeThroughPhase8(root, artifactDir) {
   sweepStalledTasks(artifactDir, { projectRoot: root });
   updateCompletionGate(artifactDir, "monitoring", "DONE", { projectRoot: root, evidence: ["manual"] });
   updatePhase(artifactDir, 6, "DONE", { projectRoot: root, evidence: "t6" });
+  approveReview(artifactDir, "backendReview");
+  waiveApiContract(artifactDir, root);
   updateCompletionGate(artifactDir, "backendReview", "DONE", { projectRoot: root, evidence: ["manual"] });
   updatePhase(artifactDir, 7, "DONE", { projectRoot: root, evidence: "t7" });
   updatePhase(artifactDir, 8, "DONE", { projectRoot: root, evidence: "t8" });
@@ -79,10 +82,13 @@ function closePhasesThrough(root, artifactDir, maxPhase) {
       updateCompletionGate(artifactDir, "monitoring", "DONE", { projectRoot: root, evidence: ["manual"] });
     }
     if (phase === 8 && required("backendReview")) {
+      approveReview(artifactDir, "backendReview");
+      waiveApiContract(artifactDir, root);
       updateCompletionGate(artifactDir, "backendReview", "DONE", { projectRoot: root, evidence: ["manual"] });
     }
     if (phase === 9) {
       if (required("frontendReview")) {
+        approveReview(artifactDir, "frontendReview");
         updateCompletionGate(artifactDir, "frontendReview", "DONE", { projectRoot: root, evidence: ["manual"] });
       }
       if (required("visualAudit")) {
@@ -267,6 +273,8 @@ test("a completed phase 9.5 counts as closed for a later phase's predecessor che
 test("re-entering a DONE-and-past phase reopens later DONE phases and their gates (Achado 5)", () => {
   const { root, artifactDir } = fixture();
   closePhasesThrough(root, artifactDir, 7);
+  approveReview(artifactDir, "backendReview");
+  waiveApiContract(artifactDir, root);
   updateCompletionGate(artifactDir, "backendReview", "DONE", {
     projectRoot: root,
     evidence: ["review:PASS"],
@@ -287,6 +295,8 @@ test("re-entering a DONE-and-past phase reopens later DONE phases and their gate
   assert.equal(reopened.state.lastSafePhase, 6);
 
   // E o caminho de volta funciona de verdade: pode fechar 8 e 9 de novo.
+  approveReview(artifactDir, "backendReview");
+  waiveApiContract(artifactDir, root);
   updateCompletionGate(artifactDir, "backendReview", "DONE", {
     projectRoot: root,
     evidence: ["review:PASS:2"],
@@ -314,6 +324,7 @@ test("lastSafePhase never advances past a jump, only past a truly closed prefix"
 test("updatePhase refuses to close a phase DONE while its own gate is legitimately BLOCKED, and does not touch the gate", () => {
   const { root, artifactDir } = frontendFixture();
   closePhasesThrough(root, artifactDir, 8);
+  approveReview(artifactDir, "frontendReview");
   updateCompletionGate(artifactDir, "frontendReview", "DONE", { projectRoot: root, evidence: ["manual"] });
   updateCompletionGate(artifactDir, "visualAudit", "BLOCKED", { projectRoot: root, reason: "VIEWPORT_MISSING: claude-in-chrome resize did not change the screenshot dimensions" });
 

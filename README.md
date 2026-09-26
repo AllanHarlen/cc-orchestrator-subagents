@@ -4,6 +4,8 @@
 
 Claude Code plugin to conduct a multi-agent development workflow from an existing PRD/spec, with Codex, Antigravity/AGY and audit artifacts.
 
+> **Gates that run what they claim (4.25.0):** the wave gate builds and tests every detected workspace (.NET, Node, Go, Rust, Python — monorepos included; it used to report build PASS for any root `package.json` without running anything), fails lines over 200 characters and product code reading the coordination folders; the API contract is copied into the repo (`materialize-api-contract.mjs`) and validated against the running API with Schemathesis in the new `apiContractValidation` gate (Phase 8.0); `requirementsCoverage` validates the evidence content against the Pensador index (RF/RNF/ARC, every linked CA, test evidence for security/isolation RNF); review gates close only on an approving verdict newer than the tasks they cover; no task is dispatched before phase 4 closes; quiet watch ticks write nothing and back off; design materialization copies only product files. The Pensador's `design-prototype` is a visual-fidelity reference passed to the front-end tasks — there is no mechanical HTML conversion.
+>
 > **Legacy `ui-prototype` role blocked (4.24.0):** handoffs that still declare the removed role are blocked with `LEGACY_UI_PROTOTYPE_ROLE`; regenerate them with Pensador >= 2.32.
 >
 > **Mechanical design gates (4.23.0):** the wave gate now lints changed front-end files for literal hex colors, px spacing/radius and inline `style={{}}` (and undefined `var(--x)`), materialization recomputes `contractSha256` and reads the real `design-audit.json` instead of trusting the handoff's `validation.status`, and the design flags of the final UI gate need mechanical evidence files (`designEvidence.tokenLint`/`previewDiff`), not booleans.
@@ -50,12 +52,12 @@ That aggregate check only proves a server is registered *somewhere* on the machi
 - **Phase 3 - Waves, routing, and isolation:** applies heuristic floors, consults comparable history when sufficient, validates routing, and separates isolated worktrees from scope-overlap serialization.
 - **Phase 4 - API/UI contracts and visual materialization:** creates and deterministically validates contracts, wire format, casing, examples, states, and permissions for every front-back exchange, materializes only the product files of the authoritative design package (`design-materialization.json`; previews stay in the Pensador package as `referenceRoot`), copies the API contract into the repository (`materialize-api-contract.mjs`) and generates strongly typed contract interfaces and DTOs via `generate-contract-types.mjs`.
 - **Phase 5 - Parallel delegation:** opens only after phases 1-4 are closed (no task is dispatched before contracts and design materialization); creates eligible worktrees, acquires leases, and dispatches tasks; both Codex and AGY receive an explainable selected model, with AGY receiving the generated design-system previews as an authoritative visual spec.
-- **Phase 6 - Lifecycle Manager:** polls adapters, persists results before consuming them, renews heartbeat/lease on observable activity, and handles stall/grace/interrupt/retry/cancel without assuming outcomes.
+- **Phase 6 - Lifecycle Manager:** polls adapters, persists results before consuming them, renews heartbeat/lease on observable activity, and handles stall/grace/interrupt/retry/cancel without assuming outcomes. A tick with no change writes no event and does not replay the whole log; the watch interval backs off up to `--max-interval-seconds` (120 s).
 - **Phase 7 - Integration:** performs Early Stack Boot smoke testing (`smoke-test-infra.mjs`) on Wave 1, runs deterministic Wave Quality Gates (`run-wave-gate.mjs`: build and tests of every detected workspace — monorepos included —, long-line/formatter check and a ban on product code reading the coordination folders) without LLM tokens, and serially integrates worktrees using deterministic scripts for diff, scope, API/UI, wire format, and validation results before category-specific corrections.
-- **Phase 8 - Back-end post-implementation review:** first validates the running API against its contract (`validate-api-contract.mjs`, Schemathesis, gate `apiContractValidation`), then delegates final read-only review to Codex with `--effort high`, **back-end only**, and saves `review/review-final.md`. If Codex runs out of quota, the Orchestrator itself does internal review. Skipped when there is no back-end.
-- **Phase 9 - Front-end post-implementation review:** delegates final read-only review to AGY with `--read-only --format json --model pro-high --effort high`, **front-end only**, validating acceptance criteria, design system rules and visual fidelity against `preview/`, and saves `review/review-frontend.md`. If AGY is unavailable, the Orchestrator does internal review. **Skipped when there is no front-end task.**
-- **Phase 9.5 - Browser E2E:** required whenever the run has front-end. Drives critical flows in a real browser and verifies CORS, tenant/host resolution, response casing, UI state and the final user-visible effect. A same-origin topology waives the gate explicitly, with a recorded reason — never by silent derivation.
-- **Phase 10 - Final reports:** creates `report/workflow-log.md`, `report/subagents-context.md` and `report/implementation-report.md`, generating the Section 13 traceability matrix deterministically via `build-traceability-matrix.mjs`, consolidating timeline, contracts, validations, sub-agents, AGY Conversation IDs and delivery status.
+- **Phase 8 - Back-end post-implementation review:** first validates the running API against its contract (`validate-api-contract.mjs`, Schemathesis, gate `apiContractValidation`), then delegates final read-only review to Codex with `--effort high`, **back-end only**, and saves `review/review-final.md`; the `backendReview` gate closes only when the report's final decision approves and it was written after the last back-end task (a correction loop forces a new review). If Codex runs out of quota, the Orchestrator itself does internal review. Skipped when there is no back-end.
+- **Phase 9 - Front-end post-implementation review:** delegates final read-only review to AGY with `--read-only --format json --model pro-high --effort high`, **front-end only**, validating acceptance criteria, design system rules and visual fidelity against `preview/`, and saves `review/review-frontend.md`; the `frontendReview` gate applies the same verdict and freshness rule. If AGY is unavailable, the Orchestrator does internal review. **Skipped when there is no front-end task.**
+- **Phase 9.5 - Browser E2E:** required whenever the run has front-end. Drives critical flows in a real browser and verifies CORS, tenant/host resolution, response casing, UI state and the final user-visible effect. It cannot be waived: every run with front-end proves its critical flows in a browser.
+- **Phase 10 - Final reports:** creates `report/workflow-log.md`, `report/subagents-context.md` and `report/implementation-report.md`, generating the Section 13 traceability matrix deterministically via `build-traceability-matrix.mjs`, consolidating timeline, contracts, validations, sub-agents, AGY Conversation IDs and delivery status; the `requirementsCoverage` gate validates `review/requirements-evidence.json` against the Pensador's requirements index.
 - **Phase 11 - Durable delivery:** prepares and persists the summary/instructions without announcing success before final gates.
 - **Phase 12 - Learning and closure:** creates `learning/learning-report.md` and candidate lessons without automatic promotion, projects history/telemetry, requires `audit.complete`, closes/verifies the run, and only then publishes delivery.
 
@@ -179,7 +181,7 @@ node scripts/orchestration-state.mjs verify --dir .orchestrator/runs/<name>
 
 A run can become `DONE` only with a non-empty task set, evidence plans, resolved scope, completed Phase 12, required artifacts, and completion gates backed by evidence. Terminal runs are immutable. Cancellation interrupts and reconciles executors before closure.
 
-`browserE2E` is required whenever the run has front-end — including a front-end-only run against an existing separate API, which is exactly the case Phase 9.5 exists for. It is also the only gate that accepts an applicability waiver: a same-origin topology must be recorded as an explicit `N/A` with a reason, never derived away from the mix of task categories.
+`browserE2E` is required whenever the run has front-end — including a front-end-only run against an existing separate API, which is exactly the case Phase 9.5 exists for. It cannot be marked `N/A`. The only gate that accepts an applicability waiver is `apiContractValidation` (Phase 8.0), and only with a reason starting with `NO_HTTP_API` or `NO_MACHINE_READABLE_CONTRACT`. The review gates (`backendReview`, `frontendReview`) read the report's final decision and refuse a review older than the tasks it covers, and `requirementsCoverage` validates the content of `review/requirements-evidence.json` (every RF/RNF/ARC id of the Pensador index snapshot, every linked CA, `kind: "test"` evidence for security/privacy/isolation RNF). Phase 5 and task dispatch require phases 1-4 closed.
 
 ## Memory, History, Intelligence, and Learning
 
@@ -538,6 +540,11 @@ Especially for C# + TypeScript:
 - `skills/orchestrator-multi-agent-development/scripts/orchestration-router.mjs`
 - `skills/orchestrator-multi-agent-development/scripts/orchestration-telemetry.mjs`
 - `skills/orchestrator-multi-agent-development/scripts/orchestration-learning.mjs`
+- `skills/orchestrator-multi-agent-development/scripts/run-wave-gate.mjs`
+- `skills/orchestrator-multi-agent-development/scripts/materialize-visual-handoff.mjs`
+- `skills/orchestrator-multi-agent-development/scripts/materialize-api-contract.mjs`
+- `skills/orchestrator-multi-agent-development/scripts/validate-api-contract.mjs`
+- `skills/orchestrator-multi-agent-development/scripts/validate-requirements-coverage.mjs`
 - `skills/orchestrator-multi-agent-development/scripts/lib/`
 - `scripts/orchestration-state.mjs`
 - `scripts/intelligence/`
@@ -551,6 +558,7 @@ node --check skills/orchestrator-multi-agent-development/scripts/orchestration-s
 node scripts/preflight.mjs
 node skills/orchestrator-multi-agent-development/scripts/validate-routing.mjs .orchestrator/runs/<name>
 node --test tests/*.test.mjs
+node skills/orchestrator-multi-agent-development/scripts/run-wave-gate.mjs --root <project> --dry-run --json
 rg --line-number --fixed-strings -- 'QUOTA_EXAUSTED' README.md commands skills
 rg --line-number --fixed-strings -- 'agyModelSource' README.md commands skills
 rg --line-number --fixed-strings -- 'agyParallel' README.md commands skills

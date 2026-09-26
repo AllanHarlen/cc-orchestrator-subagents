@@ -184,9 +184,12 @@ Os gates persistidos são:
 | `contractsInspected` | 4 | obrigatório quando existe qualquer arquivo em `contracts/`; cada contrato exige evidência válida de `inspect-contract.mjs` vinculada ao SHA-256 atual |
 | `infraSmokeTest` | 4 | obrigatório quando existem back-end e front-end; exige `evidence/infra-smoke-test.json` schema v1, aplicável, real (não dry-run) e `PASS` |
 | `monitoring` | 6 | sempre obrigatório — fecha junto com a Fase 6, exige evidência de telemetria (`run/monitoring.md` ou `--evidence`) |
-| `backendReview` | 8 | obrigatório quando existe back-end |
-| `frontendReview` | 9 | obrigatório quando existe front-end |
-| `browserE2E` | 9.5 | obrigatório sempre que existe front-end; `N/A` é a única waiver de aplicabilidade e exige motivo explícito — `--delegated-to <plugin>` marca o caso em que outro plugin da cadeia assume a verificação (ver abaixo), sem o qual a `N/A` é um waiver puro |
+| `apiContractValidation` | 8 | obrigatório quando existe back-end; exige `evidence/api-contract-validation.json` de `validate-api-contract.mjs` (schema v1, não dry-run, `PASS`, `contractSha256` igual ao contrato em disco). Único gate que aceita `N/A`, e só com motivo iniciado por `NO_HTTP_API` ou `NO_MACHINE_READABLE_CONTRACT` (conta como "não aplicável", não força `PARTIAL`) |
+| `backendReview` | 8 | obrigatório quando existe back-end; exige `review/review-final.md` cuja última decisão seja `APROVADO`/`APROVADO_COM_RESSALVAS` e escrito depois de toda task de back-end concluída (`REVIEW_REPROVED`, `REVIEW_VERDICT_MISSING`, `REVIEW_STALE`) |
+| `frontendReview` | 9 | obrigatório quando existe front-end; mesma regra sobre `review/review-frontend.md` e as tasks de front-end |
+| `visualAudit` | 9 | obrigatório quando existe front-end; exige `ui-evidence.json` válido |
+| `browserE2E` | 9.5 | obrigatório sempre que existe front-end; não aceita `N/A` nem delegação (4.11+) |
+| `requirementsCoverage` | 10 | obrigatório quando alguma task declara `requirementIds`; exige `review/requirements-evidence.json` cobrindo toda id reivindicada e, com o snapshot `plan/requirements-index.json`, toda id RF/RNF/ARC do índice, todo `CA-XX` ligado e evidência `kind: "test"` para RNF de segurança/privacidade/isolamento (`REQUIREMENTS_EVIDENCE_BLOCKED`) |
 | `reports` | 10 | sempre obrigatório |
 | `handoff` | 10 | sempre obrigatório |
 | `delivery` | 11 | sempre obrigatório |
@@ -194,9 +197,13 @@ Os gates persistidos são:
 
 `DONE` exige evidence ID/arquivo. Um gate não obrigatório pode ser `N/A` somente com motivo.
 
-A aplicabilidade derivada por categoria responde apenas "existe front-end?". Um run só de front-end (SPA consumindo API separada já existente) é exatamente o caso da Fase 9.5 e mantém o gate `PENDING`. Quando front/back não usam origens separadas, registre a decisão arquitetural de forma explícita: `gate --gate browserE2E --status N/A --required false --reason "<topologia comprovada>"`. A topologia é julgamento do orquestrador e precisa ficar no motivo — nunca é inferida silenciosamente da mistura de categorias. Nenhum outro gate obrigatório aceita override.
+A aplicabilidade derivada por categoria responde apenas "existe front-end?" / "existe back-end?". Um run só de front-end (SPA consumindo API separada já existente) é exatamente o caso da Fase 9.5 e mantém o gate `PENDING`; desde a 4.11 o `browserE2E` não aceita `N/A`, nem por topologia de mesma origem, nem por delegação. O único override de aplicabilidade é o do `apiContractValidation`, com os motivos listados acima. Uma fase inteira só pode ser `N/A` quando tem gate dispensável **e** nenhum gate não dispensável obrigatório (`PHASE_NOT_WAIVABLE`): o `apiContractValidation` nunca torna a Fase 8 dispensável.
 
-### Delegação de gate ao Testador (modo conjunto a partir do Pensador)
+Ordem das fases: `phase --phase 5 --status RUNNING` (ou qualquer fase posterior) recusa com `PHASE_PREREQUISITES_OPEN` e `task --status RUNNING` com `TASK_DISPATCH_BEFORE_PHASE_4` enquanto as Fases 1 a 4 não estiverem `DONE`/`N/A` — assim que a run registrou alguma fase além da 1 (o `init` abre a Fase 1).
+
+### Delegação de gate ao Testador (legado, runs anteriores à 4.11)
+
+> Não aplicar em runs novas: no contrato atual `browserE2E` e `visualAudit` rodam no Orquestrador e não podem ser delegados. A descrição abaixo documenta o comportamento de runs antigas.
 
 Quando a run é modo conjunto (Fase 1 detectou `.pensador/<slug>-vN/handoff.json`) e `cc-testador-subagents` está instalado, a Fase 9.5 não roda aqui — o Testador é quem dirige o navegador. Isso **não é um waiver comum**: a verificação vai rodar, só que no próximo estágio da cadeia. Marque explicitamente:
 
@@ -223,7 +230,9 @@ node "$STATE" task --dir .orchestrator/runs/<slug> --task BE-01 --status RUNNING
 node "$STATE" heartbeat --dir .orchestrator/runs/<slug> --task BE-01 \
   --api-calls 7 --tool-calls 13 --current-tool Edit --in-tool true
 node "$STATE" gate --dir .orchestrator/runs/<slug> --gate backendReview \
-  --status DONE --evidence file:review/review-final.md
+  --status DONE   # le a decisao final de review/review-final.md e confere que e mais nova que as tasks
+node "$STATE" gate --dir .orchestrator/runs/<slug> --gate apiContractValidation \
+  --status N/A --required false --reason "NO_HTTP_API: worker sem endpoints"
 node "$STATE" audit --dir .orchestrator/runs/<slug>
 node "$STATE" verify --dir .orchestrator/runs/<slug>
 node "$STATE" run --dir .orchestrator/runs/<slug> --status DONE

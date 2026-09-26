@@ -1804,10 +1804,8 @@ function completionGateRequirements(tasks, artifactDir = null) {
     frontendReview: frontend,
     visualAudit: frontend,
     // Todo front-end exige verificacao em navegador real. A parte mecanicamente decidivel
-    // aqui e apenas "existe front-end"; se a topologia nao tiver origens separadas, a
-    // dispensa e uma decisao arquitetural que precisa ficar registrada como waiver com
-    // motivo (gate --gate browserE2E --status N/A --required false --reason ...), nunca
-    // uma derivacao silenciosa por categoria de task.
+    // aqui e apenas "existe front-end"; desde a 4.11 o gate nao e waivable (nem por
+    // topologia de mesma origem, nem por delegacao ao Testador).
     browserE2E: frontend,
     // Semantic evidence is mandatory only for PRD-derived plans that declare
     // requirementIds. Spec/legacy plans remain compatible and explicit.

@@ -882,7 +882,7 @@ Se houver achados bloqueantes em qualquer das fases de review (8 ou 9):
 
 > **Esta fase verifica funcao e semantica visual.** Alem dos fluxos, cubra desktop/mobile, compare telas criticas ao preview resolvido, confirme tokens computados, fonte carregada, navegacao, iconografia e assets. Grave `review/ui-evidence.json` e feche o gate `visualAudit`; o validador rejeita commit como evidencia visual e exige screenshot, viewport, requisito, assercao de navegador e prova de API real.
 
-**Quando roda:** sempre que houver task `FRONTEND_ONLY` ou fatia front-end de `FULLSTACK` **e** o front-end for servido como deploy/origem separada do back-end (SPA/Next.js/etc. chamando uma API em outra porta/host). Quando nao ha front-end, ou o front e server-rendered sem chamadas cross-origin, registre "N/A" e siga.
+**Quando roda:** sempre que houver task `FRONTEND_ONLY` ou fatia front-end de `FULLSTACK` **e** o front-end for servido como deploy/origem separada do back-end (SPA/Next.js/etc. chamando uma API em outra porta/host). Sem front-end o gate nao e exigido. Com front-end ele e sempre obrigatorio (desde a 4.11 nao aceita `N/A`, nem para front server-rendered sem chamadas cross-origin): nesse caso a verificacao em navegador continua valendo para fluxo, estado e efeito visivel.
 
 **Compatibilidade legada (nao aplicar a runs 4.11+).** A delegacao abaixo existia em runs anteriores. No contrato atual, `browserE2E` e `visualAudit` rodam no Orquestrador e nao podem ser delegados; portanto nao execute estes comandos em runs novas:
 

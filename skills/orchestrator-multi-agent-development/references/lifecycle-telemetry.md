@@ -22,10 +22,12 @@ O lifecycle persiste a resposta em `run/executor-results/` antes de heartbeat/re
 
 ```bash
 node "${CLAUDE_SKILL_DIR}/scripts/orchestration-lifecycle.mjs" tick --dir <run> --adapter-config <json>
-node "${CLAUDE_SKILL_DIR}/scripts/orchestration-lifecycle.mjs" watch --dir <run> --interval-seconds 30 --max-ticks 100
+node "${CLAUDE_SKILL_DIR}/scripts/orchestration-lifecycle.mjs" watch --dir <run> --interval-seconds 30 --max-interval-seconds 120 --max-ticks 100
 ```
 
 Progresso renova heartbeat e lease; silêncio produz `STALLED`, grace e depois `INTERRUPT_THEN_RECONCILE`. Retry é proibido antes de reconciliar e confirmar que a sessão antiga não está viva.
+
+Custo do polling (4.25.0): um tick em que nenhuma task mudou é **silencioso** (`quiet: true`) — o sweep não grava evento (persiste um heartbeat de `lifecycle.lastSweepAt` no máximo a cada 5 min), o reconcile não grava evento quando só timestamps mudariam, o tick não refaz a verificação por replay completo do log e pula as projeções de history/telemetry. A cada tick silencioso o intervalo do `watch` dobra até `--max-interval-seconds` (padrão 120 s); qualquer mudança volta ao `--interval-seconds`. `reconcile`/`resume` explícitos continuam verificando o replay. `--persist-every-tick` restaura o comportamento antigo (um evento por tick) para diagnóstico. As recomendações de `reconcile`/`resume` saem só das tasks reconciliadas na passada atual — uma task `DONE` não reaparece com a recomendação que recebeu quando estava `STALLED`.
 
 ### Monitoramento do contrato de repasse de cota
 
